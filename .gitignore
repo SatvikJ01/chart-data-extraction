@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
+# Data and checkpoints are not versioned
+data/
+*.pth
+*.ckpt
+submission.csv
