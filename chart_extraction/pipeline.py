@@ -191,6 +191,10 @@ def run_pipeline(config: PipelineConfig, device: str = "cuda:0") -> pd.DataFrame
     from chart_extraction.markers.inference import detect_markers
     from chart_extraction.markers.model import load_marker_model
 
+    config.require_paths(
+        "image_dir", "donut_model_dir", "x_axis_model_path",
+        "y_axis_model_path", "marker_model_path",
+    )
     refs = discover_images(config.image_dir, config.image_glob)
     logger.info("discovered %d images", len(refs))
 

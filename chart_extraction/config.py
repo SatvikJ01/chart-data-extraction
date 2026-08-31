@@ -66,14 +66,65 @@ BEAM2 = GenerationConfig(num_beams=2, do_sample=False)
 
 
 @dataclass(frozen=True)
+class RuntimeConfig:
+    """Device, precision and OOM behaviour.
+
+    Separate from PipelineConfig because these are properties of the *machine*
+    a run happens on, not of the pipeline being evaluated. Two runs with
+    different RuntimeConfigs should produce the same scores; two runs with
+    different PipelineConfigs should not.
+
+    The exception, and it is recorded in the result file for exactly this
+    reason: an OOM retry that falls back to a lower Donut input resolution DOES
+    change that image's prediction. That is why OomPolicy events are counted and
+    reported rather than merely logged.
+    """
+
+    device: str = "cuda:0"
+    #: "fp32" or "fp16". fp16 halves Donut's weights and autocasts the
+    #: detection stages.
+    precision: str = "fp32"
+    #: Retry ladder for images that will not fit. Empty disables rescaling.
+    oom_retry_scales: tuple[float, ...] = (0.75, 0.5)
+    oom_retry_enabled: bool = True
+    #: Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True at startup.
+    expandable_segments: bool = True
+
+    @classmethod
+    def local_gpu(cls, device: str = "cuda:0") -> "RuntimeConfig":
+        """Preset for a single local card: fp16 and full OOM recovery."""
+        return cls(device=device, precision="fp16")
+
+    @classmethod
+    def cpu(cls) -> "RuntimeConfig":
+        return cls(device="cpu", precision="fp32", expandable_segments=False)
+
+
+#: Batch sizes for a single local GPU. Batch size 1 everywhere: peak memory on
+#: this pipeline is dominated by Donut's encoder activations, and a batch of one
+#: is what lets a small card finish a run at all. It is slower per image, which
+#: is why the latency figures record the batch size they were measured at.
+LOCAL_GPU_BATCH_SIZES = {
+    "donut_batch_size": 1,
+    "axis_batch_size": 1,
+    "marker_batch_size": 1,
+}
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
-    image_dir: Path = Path("/kaggle/input/benetech-making-graphs-accessible/test/images")
+    # Paths default to None, never to a Kaggle mount. A hardcoded
+    # /kaggle/input default silently resolves to a non-existent path on any
+    # other machine and fails later inside a model loader, which is a much
+    # worse error than being told up front that nothing was configured.
+    # Resolution lives in chart_extraction.paths (CLI > env > config > preset).
+    image_dir: Path | None = None
     image_glob: str = "*.jpg"
 
-    donut_model_dir: Path = Path("/kaggle/input/benetech-donut")
-    x_axis_model_path: Path = Path("/kaggle/input/x-axis-model-10/model (1).pth")
-    y_axis_model_path: Path = Path("/kaggle/input/y-axis-model-10/Y_Point_generation_weights_1.0.pth")
-    marker_model_path: Path = Path("/kaggle/input/marker-model/Marker_weights.pth")
+    donut_model_dir: Path | None = None
+    x_axis_model_path: Path | None = None
+    y_axis_model_path: Path | None = None
+    marker_model_path: Path | None = None
 
     generation: GenerationConfig = field(default_factory=lambda: GREEDY)
 
@@ -103,3 +154,18 @@ class PipelineConfig:
 
     placeholder_data_series: str = "0;0"
     placeholder_chart_type: str = "line"
+
+    def require_paths(self, *names: str) -> None:
+        """Raise if any named path field is unset.
+
+        Called by anything that is about to load a checkpoint, so an unset path
+        is reported by name rather than surfacing as a confusing failure inside
+        transformers or torch.load.
+        """
+        unset = [name for name in names if getattr(self, name) is None]
+        if unset:
+            raise ValueError(
+                f"PipelineConfig paths not set: {unset}. Resolve them with "
+                "chart_extraction.paths.resolve_paths (CLI flag, BENETECH_* env "
+                "var, config file, or a preset)."
+            )
