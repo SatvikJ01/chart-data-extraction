@@ -13,3 +13,6 @@ venv/
 *.pth
 *.ckpt
 submission.csv
+
+# Local path config (copy from the .example)
+chart_extraction.paths.json

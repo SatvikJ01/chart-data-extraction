@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to chart_extraction.paths.json (gitignored) and edit. Lowest precedence after CLI flags and BENETECH_* env vars.",
+  "data_root": "/home/you/data/benetech-making-graphs-accessible",
+  "donut_dir": "/home/you/models/benetech-donut",
+  "x_axis_model": "/home/you/models/x_axis.pth",
+  "y_axis_model": "/home/you/models/y_axis.pth",
+  "marker_model": "/home/you/models/marker.pth",
+  "results_dir": "results"
+}
