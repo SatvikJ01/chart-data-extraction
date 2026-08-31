@@ -6,8 +6,10 @@ __pycache__/
 .venv/
 venv/
 
-# Data and checkpoints are not versioned
-data/
+# Data and checkpoints are not versioned.
+# Anchored with a leading slash: an unanchored 'data/' would also match
+# chart_extraction/data/, which is source.
+/data/
 *.pth
 *.ckpt
 submission.csv
