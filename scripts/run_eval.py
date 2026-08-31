@@ -53,11 +53,16 @@ from chart_extraction.paths import (  # noqa: E402
     describe, explain_unresolved, resolve_paths,
 )
 from chart_extraction.runtime import OomPolicy  # noqa: E402
+from chart_extraction.stages import (  # noqa: E402
+    MODE_DONUT_ONLY, detect_stages, resolve_mode,
+)
 
 DECODE_CONFIGS = {"greedy": GREEDY, "beam2": BEAM2}
-REQUIRED_PATHS = (
-    "data_root", "donut_dir", "x_axis_model", "y_axis_model", "marker_model",
-)
+#: Without these nothing can run at all.
+REQUIRED_PATHS = ("data_root", "donut_dir")
+#: Needed only for the full pipeline; absent means a donut_only run.
+DETECTION_PATHS = ("x_axis_model", "y_axis_model", "marker_model")
+ALL_PATHS = REQUIRED_PATHS + DETECTION_PATHS
 
 
 def parse_args(argv=None):
@@ -104,6 +109,11 @@ def parse_args(argv=None):
     runtime.add_argument("--no-expandable-segments", action="store_true",
                          help="do not set PYTORCH_CUDA_ALLOC_CONF")
 
+    parser.add_argument("--mode", choices=["auto", "full", "donut_only"], default="auto",
+                        help="auto (default) runs the full pipeline when the axis and "
+                             "marker checkpoints are present and falls back to Donut-only "
+                             "when they are not. full errors out rather than silently "
+                             "downgrading")
     parser.add_argument("--decode", choices=sorted(DECODE_CONFIGS), default="greedy",
                         help="Donut decoding strategy. Only beam width varies.")
     parser.add_argument("--axis-label-source", default="donut_series",
@@ -137,7 +147,7 @@ def build_runtime(args) -> RuntimeConfig:
     )
 
 
-def build_pipeline_config(args, resolved, runtime) -> PipelineConfig:
+def build_pipeline_config(args, resolved, runtime, mode="full") -> PipelineConfig:
     batch_sizes = dict(LOCAL_GPU_BATCH_SIZES) if args.profile == "local" else {}
     if args.batch_size is not None:
         batch_sizes = {
@@ -156,6 +166,7 @@ def build_pipeline_config(args, resolved, runtime) -> PipelineConfig:
         marker_model_path=resolved.marker_model,
         generation=DECODE_CONFIGS[args.decode],
         axis_label_source=args.axis_label_source,
+        mode=mode,
         **batch_sizes,
     )
 
@@ -186,11 +197,12 @@ def main(argv=None) -> int:
         preset=args.preset,
     )
     print("paths:")
-    print(describe(resolved, REQUIRED_PATHS))
+    print(describe(resolved, ALL_PATHS))
+    print()
 
     unresolved = resolved.missing(REQUIRED_PATHS)
     if unresolved:
-        log.error("could not resolve %d path(s):", len(unresolved))
+        log.error("could not resolve %d required path(s):", len(unresolved))
         for name in unresolved:
             log.error("  %s", explain_unresolved(name))
         return 2
@@ -200,6 +212,23 @@ def main(argv=None) -> int:
         for name, path in absent:
             log.error("%s resolved to a path that does not exist: %s", name, path)
         return 2
+
+    availability = detect_stages(resolved)
+    try:
+        mode = resolve_mode(args.mode, availability)
+    except ValueError as exc:
+        log.error("%s", exc)
+        return 2
+
+    print(availability.describe())
+    print()
+    if mode == MODE_DONUT_ONLY:
+        log.warning(
+            "running DONUT-ONLY: %s unavailable. Donut's generated series is "
+            "used directly, no detection stage runs, and the resulting score is "
+            "not comparable with a full-pipeline score.",
+            " and ".join(availability.skipped),
+        )
 
     runtime = build_runtime(args)
     log.info("runtime: %s", runtime)
@@ -239,7 +268,7 @@ def main(argv=None) -> int:
         return 2
 
     split_annotations = {i: annotations[i] for i in image_ids}
-    config = build_pipeline_config(args, resolved, runtime)
+    config = build_pipeline_config(args, resolved, runtime, mode)
 
     from chart_extraction.eval.runner import (
         describe_device, load_all_models, peak_memory_mb, run_stages,
@@ -258,6 +287,7 @@ def main(argv=None) -> int:
     runtime_info["subset"] = args.subset
     runtime_info["limit"] = args.limit
     runtime_info["allocator"] = os.environ.get("PYTORCH_CUDA_ALLOC_CONF")
+    runtime_info["mode"] = mode
 
     result = evaluate(
         refs=refs,
@@ -272,11 +302,18 @@ def main(argv=None) -> int:
         run_id=args.run_id,
         runtime=runtime_info,
         oom_policy=policy,
+        stages=availability.as_dict() | {"mode": mode},
     )
 
     print()
     print(format_report(result))
     print()
+
+    for warning in result.warnings:
+        if warning["level"] == "error":
+            log.error("SANITY [%s] %s", warning["code"], warning["message"])
+        elif warning["level"] == "warning":
+            log.warning("SANITY [%s] %s", warning["code"], warning["message"])
 
     if args.limit:
         log.warning("smoke run -- NOT written to the results file")
