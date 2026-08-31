@@ -38,8 +38,13 @@ distribution, and the gap between the two is itself the finding.
 notebook set `do_sample`, so temperature/top_k/top_p were inert (Phase 0
 finding E). No row here is temperature or nucleus-sampling tuning.
 
-| run | decode | axis labels | extracted | generated | overall | type acc | ms/img | n img |
-|---|---|---|---:|---:|---:|---:|---:|---:|
+`prec`/`bs` are runtime settings and should not change scores -- except `oom`,
+which counts images processed at reduced Donut input resolution after an
+out-of-memory retry. A non-zero `oom` means that row contains degraded images
+and is not directly comparable with a row that has none.
+
+| run | decode | axis labels | extracted | generated | overall | type acc | ms/img | n img | prec | bs | oom |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
 """
 
 
@@ -59,7 +64,10 @@ def ablation_row(result: EvaluationResult) -> str:
         f"| {_fmt(scores.get('overall', 0.0))} "
         f"| {_fmt(scores.get('chart_type_accuracy', 0.0))} "
         f"| {result.latency.get('total_ms', 0.0):.1f} "
-        f"| {result.split.get('n_images', 0)} |\n"
+        f"| {result.split.get('n_images', 0)} "
+        f"| {result.runtime.get('precision', '?')} "
+        f"| {result.config.get('donut_batch_size', '?')} "
+        f"| {result.oom.get('n_recovered', 0)} |\n"
     )
 
 
@@ -133,6 +141,41 @@ def format_report(result: EvaluationResult) -> str:
     for key, value in result.latency.items():
         if key.endswith("_ms"):
             lines.append(f"    {key:<16} {value:.1f}")
+
+    lines += ["", "  runtime:"]
+    runtime = result.runtime
+    lines.append(
+        f"    device           {runtime.get('gpu_name', runtime.get('requested_device', '?'))}"
+    )
+    lines.append(f"    precision        {runtime.get('precision', '?')}")
+    lines.append(
+        f"    batch sizes      donut={result.config.get('donut_batch_size', '?')}"
+        f" axis={result.config.get('axis_batch_size', '?')}"
+        f" markers={result.config.get('marker_batch_size', '?')}"
+    )
+    if runtime.get("peak_memory_mb") is not None:
+        lines.append(f"    peak GPU memory  {runtime['peak_memory_mb']:.1f} MB")
+    if runtime.get("gpu_total_mb") is not None:
+        lines.append(f"    GPU total        {runtime['gpu_total_mb']:.1f} MB")
+
+    oom = result.oom
+    if oom:
+        recovered = oom.get("n_recovered", 0)
+        unrecovered = oom.get("n_unrecovered", 0)
+        if recovered or unrecovered:
+            lines += ["", "  OOM recovery:"]
+            lines.append(f"    degraded (lower res)  {recovered}")
+            lines.append(f"    unrecoverable         {unrecovered}")
+            for event in oom.get("events", [])[:10]:
+                if event.get("recovered"):
+                    lines.append(
+                        f"      {event['image_id']}: scale {event['scale']}"
+                        f" -> {event['height']}x{event['width']}"
+                    )
+                else:
+                    lines.append(f"      {event['image_id']}: no scale fit")
+            if len(oom.get("events", [])) > 10:
+                lines.append(f"      ... {len(oom['events']) - 10} more")
 
     lines += ["", "  models:"]
     for model in result.models:

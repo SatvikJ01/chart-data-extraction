@@ -199,6 +199,8 @@ class EvaluationResult:
     latency: dict
     models: list
     populations: dict
+    runtime: dict = field(default_factory=dict)
+    oom: dict = field(default_factory=dict)
     caveats: list = field(default_factory=lambda: [LEAKAGE_CAVEAT])
     per_instance: pd.DataFrame | None = None
 
@@ -221,6 +223,8 @@ class EvaluationResult:
             "latency": self.latency,
             "models": self.models,
             "populations": self.populations,
+            "runtime": self.runtime,
+            "oom": self.oom,
             "caveats": self.caveats,
         }
 
@@ -236,6 +240,8 @@ def evaluate(
     config: PipelineConfig,
     split: Split,
     run_id: str | None = None,
+    runtime: dict | None = None,
+    oom_policy=None,
 ) -> EvaluationResult:
     """Aggregate one pass. Pure -- no models are run here."""
     image_ids = [r.image_id for r in refs]
@@ -245,6 +251,24 @@ def evaluate(
 
     scores = score_breakdown(outcomes, annotations, image_ids)
     per_instance = scores.pop("per_instance", None)
+
+    oom_summary = oom_policy.summary() if oom_policy is not None else {}
+    caveats = [LEAKAGE_CAVEAT]
+    if oom_summary.get("n_recovered"):
+        # An OOM retry lowers that image's Donut input resolution, which changes
+        # its prediction. A run containing degraded images is not directly
+        # comparable with one that has none, so the caveat travels with the row
+        # rather than sitting only in the log.
+        caveats.append(
+            f"{oom_summary['n_recovered']} image(s) were processed at reduced "
+            "Donut input resolution after an out-of-memory retry and are not "
+            "directly comparable with the rest of this run. See oom.events."
+        )
+    if oom_summary.get("n_unrecovered"):
+        caveats.append(
+            f"{oom_summary['n_unrecovered']} image(s) could not be processed at "
+            "any resolution and scored as failures."
+        )
 
     populations = {
         # Finding F: horizontal_bar had no decode branch in the notebook and
@@ -271,6 +295,11 @@ def evaluate(
             "axis_label_source": config.axis_label_source,
             "marker_score_threshold": config.marker_score_threshold,
             "donut_random_padding": config.donut_random_padding,
+            # Latency is uninterpretable without the batch sizes it was
+            # measured at, so they are part of the recorded config.
+            "donut_batch_size": config.donut_batch_size,
+            "axis_batch_size": config.axis_batch_size,
+            "marker_batch_size": config.marker_batch_size,
             "python": platform.python_version(),
         },
         split={
@@ -288,6 +317,9 @@ def evaluate(
         latency=timings.per_image_ms() | {"total_wall_s": round(timings.total_s, 3)},
         models=models,
         populations=populations,
+        runtime=runtime or {},
+        oom=oom_summary,
+        caveats=caveats,
         per_instance=per_instance,
     )
 
