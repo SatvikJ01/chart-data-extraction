@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Kaggle-runnable entrypoint: installs missing deps, then runs both decode
-configs through the same harness.
-
-Paste into a Kaggle notebook cell (GPU on, internet on for the pip install):
+"""Kaggle convenience wrapper: install missing deps, then run both decode
+configs through the same harness as a local run.
 
     !git clone https://github.com/<user>/<repo>.git /kaggle/working/repo
     %run /kaggle/working/repo/scripts/kaggle_eval.py
 
-Requires these datasets attached to the notebook:
-    benetech-making-graphs-accessible   (the competition data)
-    benetech-donut                      (fine-tuned Donut checkpoint)
-    x-axis-model-10, y-axis-model-10    (axis tick CNNs)
-    marker-model                        (Faster R-CNN marker detector)
+Pass --dry-run to verify paths and report what would be installed, without
+installing anything or loading a model.
 
-Checkpoint paths are the ones the original notebooks used. Override with the
-environment variables named in PATHS below if a dataset is mounted elsewhere.
+This is a thin wrapper. It owns no paths of its own -- resolution is
+``chart_extraction.paths``, identical to a local run, so the only difference
+between here and a workstation is which preset happens to apply and which
+environment variables are set.
+
+Attach these datasets (or set the BENETECH_* environment variables):
+    benetech-making-graphs-accessible, benetech-donut,
+    x-axis-model-10, y-axis-model-10, marker-model
 """
 
 from __future__ import annotations
@@ -25,6 +26,15 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+# Before any torch import, including transitively through the package.
+from chart_extraction.runtime import configure_allocator  # noqa: E402
+
+configure_allocator()
+
+from chart_extraction.paths import describe, resolve_paths  # noqa: E402
 
 # Kaggle images ship torch/torchvision/pandas/numpy/PIL and usually cv2, but
 # not always transformers at the version this needs. Install only what is
@@ -35,72 +45,61 @@ REQUIRED = {
     "cv2": "opencv-python>=4.7",
 }
 
-PATHS = {
-    "data_root": os.environ.get(
-        "BENETECH_DATA_ROOT", "/kaggle/input/benetech-making-graphs-accessible"
-    ),
-    "donut_dir": os.environ.get("BENETECH_DONUT_DIR", "/kaggle/input/benetech-donut"),
-    "x_axis_model": os.environ.get(
-        "BENETECH_X_AXIS", "/kaggle/input/x-axis-model-10/model (1).pth"
-    ),
-    "y_axis_model": os.environ.get(
-        "BENETECH_Y_AXIS",
-        "/kaggle/input/y-axis-model-10/Y_Point_generation_weights_1.0.pth",
-    ),
-    "marker_model": os.environ.get(
-        "BENETECH_MARKER", "/kaggle/input/marker-model/Marker_weights.pth"
-    ),
-}
+REQUIRED_PATHS = (
+    "data_root", "donut_dir", "x_axis_model", "y_axis_model", "marker_model",
+)
 
 
 def install_missing() -> None:
-    missing = []
-    for module, requirement in REQUIRED.items():
-        try:
-            __import__(module)
-        except ImportError:
-            missing.append(requirement)
-
+    missing = [req for module, req in REQUIRED.items() if not _importable(module)]
     if not missing:
         print("[deps] all present, nothing to install")
         return
-
     print(f"[deps] installing: {' '.join(missing)}")
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "--quiet", *missing]
-    )
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", *missing])
     print("[deps] done")
 
 
-def check_paths() -> bool:
-    ok = True
-    for name, raw in PATHS.items():
-        path = Path(raw)
-        exists = path.exists()
-        print(f"[paths] {'OK ' if exists else 'MISSING'}  {name:<14} {path}")
-        if not exists:
-            ok = False
-    if not ok:
+def _importable(module: str) -> bool:
+    try:
+        __import__(module)
+        return True
+    except ImportError:
+        return False
+
+
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    dry_run = "--dry-run" in argv
+
+    # Paths are checked BEFORE installing anything. Installing several hundred
+    # MB of wheels and only then discovering the datasets are not attached
+    # wastes minutes of a session for no reason.
+    resolved = resolve_paths()
+    print("paths:")
+    print(describe(resolved, REQUIRED_PATHS))
+
+    if resolved.missing(REQUIRED_PATHS) or resolved.not_on_disk(REQUIRED_PATHS):
         print(
-            "\n[paths] Attach the missing datasets to the notebook, or set the "
-            "BENETECH_* environment variables to where they are mounted."
+            "\n[paths] Attach the missing datasets, or set the BENETECH_* "
+            "environment variables to where they are mounted. "
+            "Nothing was installed."
         )
-    return ok
-
-
-def main() -> int:
-    install_missing()
-    if not check_paths():
         return 2
 
-    if str(REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(REPO_ROOT))
+    if dry_run:
+        missing = [req for module, req in REQUIRED.items() if not _importable(module)]
+        print(f"[dry-run] paths OK; would install: {missing or 'nothing'}")
+        return 0
+
+    install_missing()
 
     from scripts.run_eval import main as run_eval_main
 
-    fraction = float(os.environ.get("BENETECH_VAL_FRACTION", "0.05"))
+    profile = os.environ.get("BENETECH_PROFILE", "kaggle")
+    subset = os.environ.get("BENETECH_SUBSET", "both")
+    fraction = os.environ.get("BENETECH_VAL_FRACTION", "0.05")
     limit = os.environ.get("BENETECH_LIMIT")
-    results_dir = os.environ.get("BENETECH_RESULTS_DIR", str(REPO_ROOT / "results"))
 
     # Both decode configs run through the identical harness and split, so the
     # only difference between the two rows is beam width.
@@ -109,14 +108,10 @@ def main() -> int:
         print(f"  decode config: {decode}")
         print("=" * 72)
         argv = [
-            "--data-root", PATHS["data_root"],
-            "--donut-dir", PATHS["donut_dir"],
-            "--x-axis-model", PATHS["x_axis_model"],
-            "--y-axis-model", PATHS["y_axis_model"],
-            "--marker-model", PATHS["marker_model"],
+            "--profile", profile,
             "--decode", decode,
-            "--fraction", str(fraction),
-            "--results-dir", results_dir,
+            "--subset", subset,
+            "--fraction", fraction,
         ]
         if limit:
             argv += ["--limit", limit]
@@ -126,8 +121,7 @@ def main() -> int:
             print(f"[run] {decode} failed with exit code {code}")
             return code
 
-    print(f"\n[done] results appended under {results_dir}")
-    print("[done] copy results/ back out of the notebook and commit it")
+    print("\n[done] results appended; copy them out of the notebook and commit")
     return 0
 
 
