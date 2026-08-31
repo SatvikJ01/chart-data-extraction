@@ -6,6 +6,14 @@ __pycache__/
 .venv/
 venv/
 
+# Downloaded model weights. checkpoints/ holds an ~800MB pytorch_model.bin;
+# GitHub hard-rejects any blob over 100MB, so this must never be staged.
+# The glob patterns are defence-in-depth for weights landing elsewhere.
+checkpoints/
+*.bin
+*.zip
+*.kaggle-partial
+
 # Data and checkpoints are not versioned.
 # Anchored with a leading slash: an unanchored 'data/' would also match
 # chart_extraction/data/, which is source.
@@ -16,3 +24,6 @@ submission.csv
 
 # Local path config (copy from the .example)
 chart_extraction.paths.json
+.venv/
+.kaggle/
+kaggle.json
