@@ -3,9 +3,12 @@
 Converts chart images (bar, line, scatter, dot) into structured tabular data
 series. Built on the Kaggle competition *Benetech — Making Graphs Accessible*.
 
-**Status: Phase 0 complete.** The pipeline is a correct, modular baseline. There
-are no accuracy numbers in this repo yet, because there is no scorer yet — that
-is Phase 1. Nothing here should be quoted as a result.
+**Status: Phases 0–2 built, not yet run.** The pipeline is a correct, modular
+baseline and the evaluation harness is complete and tested. **There are still no
+accuracy numbers**, because the checkpoints and competition data live in Kaggle
+datasets that are not on the development machine. `results/` is empty until
+`scripts/kaggle_eval.py` runs there. Nothing in this repo should be quoted as a
+result yet.
 
 ## Pipeline
 
@@ -36,8 +39,12 @@ chart_extraction/
   markers/             Faster R-CNN wrapper, box geometry
   decoding/            per-chart-type decoders + registry
   pipeline.py          stage orchestration, failure taxonomy
+  eval/                metric, ground truth, splits, harness, taxonomy, results
+scripts/run_eval.py    one evaluation pass over a split
+scripts/kaggle_eval.py Kaggle entrypoint: installs deps, runs both decode configs
 docs/PHASE0_AUDIT.md   what was broken, what was fixed, what was preserved
 notebooks/             the original Kaggle notebooks, unmodified
+results/               ablation table + per-run JSON (empty until a real run)
 ```
 
 ## Running
@@ -99,11 +106,60 @@ inert in both. The two generation configs differ **only** in `num_beams` (1 vs
 2) — greedy vs 2-beam search. The comparison is still worth running; it just
 cannot be called temperature or nucleus-sampling tuning.
 
+## Evaluation (Phases 1–2)
+
+The competition metric is asymmetric by design, and knowing why is the point:
+
+- **Categorical** series → summed Levenshtein distance normalised by total
+  ground-truth string length. Nearly-right labels earn partial credit.
+- **Numeric** series → RMSE normalised against the RMSE of predicting the
+  ground-truth mean. A prediction is measured against the trivial "guess the
+  average" baseline; a zero-variance series cannot earn partial credit.
+
+Both squash through `2 - 2/(1 + exp(-x))`. Two gates precede everything and
+award exactly 0: wrong chart type, and wrong series length. The length gate is
+why the old `0;0` placeholder scored nothing rather than "a little".
+
+One pass over a split emits every number together — overall, per-chart-type,
+per-source, latency, model sizes and the error taxonomy — because they share a
+single inference run.
+
+```bash
+python scripts/run_eval.py --data-root <competition-root> --donut-dir <donut-ckpt> --decode greedy
+```
+
+### The split, and why extracted is the headline
+
+Benetech built the dataset from synthetic (`generated`) and real textbook
+(`extracted`) charts. Training is overwhelmingly generated; the competition's
+test set skewed far more toward extracted, and top teams scored 0.88 public
+against 0.72 private. Local validation in this competition was notoriously
+optimistic.
+
+So the split is keyed on the annotation `source` field, **extracted is reported
+as the headline**, generated is reported beside it, and the gap between them is
+treated as a finding rather than noise.
+
+### Leakage caveat, carried on every result row
+
+The split is held out with respect to *future* training in this repo. It is
+**not** guaranteed unseen by the checkpoints being evaluated — those were
+fine-tuned elsewhere on `train/` with no recorded partition. Any validation
+image may have been in their training data. Scores will be optimistic for these
+checkpoints, on top of the synthetic-vs-extracted optimism. Both effects push
+the same direction, and neither can be corrected after the fact — only stated.
+
+### Decoding configs
+
+`--decode greedy` and `--decode beam2` run through the identical harness and
+split. Per Phase 0 finding E, these differ **only in beam width**; results are
+labelled as beam search and never as temperature or nucleus-sampling tuning.
+
 ## Roadmap
 
-- **Phase 0** — correct, modular baseline ✅
-- **Phase 1** — official metric, extracted-vs-generated validation split, first honest number
-- **Phase 2** — per-chart-type error taxonomy
+- **Phase 0** — correct, modular baseline ✅ built
+- **Phase 1** — metric, split, harness ✅ built, ⏳ not yet run
+- **Phase 2** — error taxonomy ✅ built, ⏳ not yet run
 - **Phase 3** — YOLOv8 vs Faster R-CNN, U-Net crop, Pytesseract axis OCR — each measured
 - **Phase 4** — zero-shot Qwen2.5-VL benchmark on the same split and metric
 - **Phase 5** — ablation table, README, latency profile
