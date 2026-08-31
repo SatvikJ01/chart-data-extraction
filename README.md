@@ -130,6 +130,42 @@ single inference run.
 python scripts/run_eval.py --profile local --subset extracted --decode greedy
 ```
 
+### Pipeline modes
+
+The pipeline needs three separate checkpoints. When the axis CNN or the marker
+detector is unavailable it degrades to **Donut-only** rather than crashing:
+Donut's generated x and y series are used directly, with no axis calibration,
+no marker detection and no per-chart-type decoder. That is exactly what
+`tuned-donut.ipynb` did.
+
+`--mode auto` (default) picks the richest mode the available checkpoints
+support. `--mode full` **errors out** rather than silently downgrading — a
+caller who asked for the full pipeline should be told they are not getting it.
+`--mode donut_only` forces the reduced path even when everything is present.
+
+A Donut-only run is a **different system**, not a degraded full run, so the mode
+is recorded everywhere the score is: a `mode` column in the ablation table, a
+`stages_skipped` list in the JSON, a banner at the top of the console report,
+and a caveat on the row. In Donut-only mode the `marker_miss` and
+`axis_misestimation` taxonomy categories are **omitted rather than reported as
+zero** — a zero there would read as a clean detection pass instead of an absent
+one.
+
+### Sanity check against the reference score
+
+The reported leaderboard score for this Donut checkpoint is **0.44**, measured
+Donut-only on the hidden test set. Runs are compared against it, but the
+comparison is deliberately **asymmetric**:
+
+- Scoring **far below** 0.44 is flagged as an error, because none of the known
+  differences explain it. That is the signal for a loading problem — weights not
+  actually loaded, processor and tokenizer from different checkpoints, or a
+  special-token schema the decoder no longer matches.
+- Scoring **above** 0.44 is reported as information only, never as success. Our
+  split is mostly synthetic and therefore easier than the test set, and the
+  checkpoint may have trained on these very images. A higher number is expected
+  and must not be reported as beating the leaderboard.
+
 ### Configuration and paths
 
 No path is hardcoded, so the same entrypoint runs locally and on Kaggle.
