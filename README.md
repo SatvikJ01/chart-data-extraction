@@ -40,8 +40,10 @@ chart_extraction/
   decoding/            per-chart-type decoders + registry
   pipeline.py          stage orchestration, failure taxonomy
   eval/                metric, ground truth, splits, harness, taxonomy, results
-scripts/run_eval.py    one evaluation pass over a split
-scripts/kaggle_eval.py Kaggle entrypoint: installs deps, runs both decode configs
+  paths.py             CLI > env > config-file > preset path resolution
+  runtime.py           allocator config, precision, OOM recovery policy
+scripts/run_eval.py    one evaluation pass over a split (local or Kaggle)
+scripts/kaggle_eval.py Kaggle wrapper: installs deps, runs both decode configs
 docs/PHASE0_AUDIT.md   what was broken, what was fixed, what was preserved
 notebooks/             the original Kaggle notebooks, unmodified
 results/               ablation table + per-run JSON (empty until a real run)
@@ -125,8 +127,56 @@ per-source, latency, model sizes and the error taxonomy — because they share a
 single inference run.
 
 ```bash
-python scripts/run_eval.py --data-root <competition-root> --donut-dir <donut-ckpt> --decode greedy
+python scripts/run_eval.py --profile local --subset extracted --decode greedy
 ```
+
+### Configuration and paths
+
+No path is hardcoded, so the same entrypoint runs locally and on Kaggle.
+Resolution order, highest precedence first: **CLI flag → `BENETECH_*` env var →
+`chart_extraction.paths.json` → preset**. A preset only applies when its
+environment is actually present, so a local run can never silently resolve to a
+Kaggle mount. An unresolved path is an error naming every mechanism that was
+checked, rather than a default that fails later inside a model loader.
+
+```bash
+export BENETECH_DATA_ROOT=~/data/benetech
+export BENETECH_DONUT_DIR=~/models/donut
+export BENETECH_X_AXIS=~/models/x_axis.pth
+export BENETECH_Y_AXIS=~/models/y_axis.pth
+export BENETECH_MARKER=~/models/marker.pth
+```
+
+`--subset extracted|generated|both` picks the source stratum; `--limit N` caps
+the split for smoke runs and refuses to write to the results file, so a smoke
+number cannot be mistaken for a reportable one.
+
+### Local single-GPU path
+
+`--profile local` targets one small card: fp16, batch size 1 on every stage, and
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` set before torch is imported
+so the allocator can grow segments in place instead of fragmenting.
+
+Donut gets `.half()` rather than autocast, because autocast keeps fp32 master
+weights resident and does nothing for the parameters that dominate its
+footprint. The axis CNN and Faster R-CNN use autocast instead — torchvision's
+detection models are fragile under hard fp16, and halving weights buys little
+for models that small.
+
+**OOM recovery.** A batch that will not fit is retried image-by-image; an image
+that still will not fit is retried at progressively lower Donut input resolution
+(default ladder `0.75, 0.5`, tunable with `--oom-retry-scales`, disabled with
+`--oom-retry-scales ''`). Every retry is logged *and counted into the result
+file*, because an image processed at reduced resolution has a different
+prediction — a run containing degraded images is not directly comparable with
+one that has none, so the `oom` column and an extra caveat travel with the row.
+An image that fits at no resolution gets an explicit `oom` failure mode rather
+than a silent placeholder.
+
+Reducing Donut's input size is not universally safe: a Swin encoder with
+absolute position embeddings is tied to its trained resolution and will raise on
+a different one. That is caught per-scale and treated as a failed attempt, so
+such a checkpoint degrades to a recorded failure instead of taking down the run.
 
 ### The split, and why extracted is the headline
 
