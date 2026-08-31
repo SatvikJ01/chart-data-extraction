@@ -21,6 +21,7 @@ from typing import Mapping
 
 from chart_extraction.eval.ground_truth import Annotation
 from chart_extraction.pipeline import ImageOutcome
+from chart_extraction.stages import MODE_DONUT_ONLY
 
 MALFORMED_SEQUENCE = "malformed_sequence"
 WRONG_CHART_TYPE = "wrong_chart_type"
@@ -84,16 +85,52 @@ def categorise(outcome: ImageOutcome, annotation: Annotation | None) -> str:
     return OK
 
 
+#: Categories that only exist when the detection stages run. In donut_only mode
+#: they are structurally impossible, and reporting them as 0 would read as
+#: "the detector missed nothing" rather than "there was no detector".
+DETECTION_ONLY_CATEGORIES = (AXIS_MISESTIMATION, MARKER_MISS, UNSUPPORTED_CHART_TYPE)
+
+
+def applicable_categories(mode: str) -> tuple[str, ...]:
+    """Categories that can occur in a given pipeline mode."""
+    if mode == MODE_DONUT_ONLY:
+        return tuple(c for c in CATEGORIES if c not in DETECTION_ONLY_CATEGORIES)
+    return CATEGORIES
+
+
 def taxonomy_counts(
     outcomes: Mapping[str, ImageOutcome],
     annotations: Mapping[str, Annotation],
+    mode: str = "full",
 ) -> dict[str, int]:
-    """Category counts over a whole split, including zero-count categories."""
-    counts = {category: 0 for category in CATEGORIES}
+    """Category counts over a whole split.
+
+    Only categories that are *possible* in this mode are reported. A donut_only
+    run omits marker_miss and axis_misestimation entirely rather than reporting
+    them as zero, because a zero there would be read as a clean detection pass
+    instead of an absent one. ``not_applicable`` lists what was omitted.
+    """
+    applicable = applicable_categories(mode)
+    counts = {category: 0 for category in applicable}
     for image_id, outcome in outcomes.items():
         category = categorise(outcome, annotations.get(image_id))
         counts[category] = counts.get(category, 0) + 1
     return counts
+
+
+def taxonomy_report(
+    outcomes: Mapping[str, ImageOutcome],
+    annotations: Mapping[str, Annotation],
+    mode: str = "full",
+) -> dict:
+    """Counts plus an explicit record of what this mode could not produce."""
+    omitted = [c for c in CATEGORIES if c not in applicable_categories(mode)]
+    return {
+        "mode": mode,
+        "counts": taxonomy_counts(outcomes, annotations, mode),
+        "by_ground_truth_chart_type": taxonomy_by_chart_type(outcomes, annotations),
+        "not_applicable": omitted,
+    }
 
 
 def taxonomy_by_chart_type(
