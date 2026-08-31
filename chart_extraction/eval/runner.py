@@ -13,6 +13,7 @@ from chart_extraction.config import PipelineConfig, RuntimeConfig
 from chart_extraction.data.images import ImageRef
 from chart_extraction.eval.harness import StageTimings, _timed, model_size
 from chart_extraction.runtime import OomPolicy, autocast_context
+from chart_extraction.stages import MODE_DONUT_ONLY
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +91,30 @@ def load_all_models(config: PipelineConfig, runtime: RuntimeConfig):
     from chart_extraction.donut.inference import prepare_donut_model
     from chart_extraction.markers.model import load_marker_model
 
-    config.require_paths(
-        "donut_model_dir", "x_axis_model_path", "y_axis_model_path", "marker_model_path",
-    )
+    donut_only = config.mode == MODE_DONUT_ONLY
+    config.require_paths("donut_model_dir")
+    if not donut_only:
+        config.require_paths(
+            "x_axis_model_path", "y_axis_model_path", "marker_model_path",
+        )
     device = runtime.device
 
     logger.info("loading Donut from %s (precision=%s)", config.donut_model_dir, runtime.precision)
     donut = VisionEncoderDecoderModel.from_pretrained(config.donut_model_dir)
     donut = prepare_donut_model(donut, precision=runtime.precision, device=device)
     processor = DonutProcessor.from_pretrained(config.donut_model_dir)
+
+    models = {"donut": donut, "processor": processor}
+    sizes = [model_size(donut, "donut")]
+
+    if donut_only:
+        logger.warning(
+            "mode=donut_only: skipping the axis CNN and marker detector. "
+            "Donut's generated series is used directly; no detection stage "
+            "runs. This is a different system from the full pipeline and its "
+            "score is not comparable with a full-pipeline score."
+        )
+        return models, sizes
 
     logger.info("loading axis models")
     model_x = load_axis_model(config.x_axis_model_path, config.axis_max_num_points, device)
@@ -107,15 +123,8 @@ def load_all_models(config: PipelineConfig, runtime: RuntimeConfig):
     logger.info("loading marker detector")
     markers = load_marker_model(config.marker_model_path, config.marker_num_classes, device)
 
-    models = {
-        "donut": donut,
-        "processor": processor,
-        "axis_x": model_x,
-        "axis_y": model_y,
-        "markers": markers,
-    }
-    sizes = [
-        model_size(donut, "donut"),
+    models.update({"axis_x": model_x, "axis_y": model_y, "markers": markers})
+    sizes += [
         model_size(model_x, "axis_x"),
         model_size(model_y, "axis_y"),
         model_size(markers, "marker_rcnn"),
@@ -162,6 +171,12 @@ def run_stages(
             oom_policy=policy,
         )
         synchronize(device)
+
+    if config.mode == MODE_DONUT_ONLY:
+        # Neither detection stage runs. Their timings stay at zero, which is
+        # correct and distinguishable from "ran and was instant" because the
+        # skipped stages are recorded by name in the result.
+        return donut_predictions, {}, {}, timings, policy
 
     with _timed(timings, "axis_s"):
         with autocast_context(device, runtime.precision):

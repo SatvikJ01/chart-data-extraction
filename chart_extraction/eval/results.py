@@ -28,6 +28,11 @@ _ABLATION_HEADER = f"""# Ablation table
 Appended one row per evaluation run. Never rewritten -- a superseded number
 stays in the record and is corrected by a later row.
 
+**`mode` gates every comparison.** `full` is Donut + axis CNN + marker detector.
+`donut_only` is Donut alone, with its generated series used directly and no
+detection stage -- a different system, not a degraded full run. Never compare a
+`donut_only` row with a `full` row, and never report one as the other.
+
 **Headline is the `extracted` column.** The `generated` column is reported
 beside it as a deliberate contrast: it is a far easier, mostly-synthetic
 distribution, and the gap between the two is itself the finding.
@@ -43,9 +48,15 @@ which counts images processed at reduced Donut input resolution after an
 out-of-memory retry. A non-zero `oom` means that row contains degraded images
 and is not directly comparable with a row that has none.
 
-| run | decode | axis labels | extracted | generated | overall | type acc | ms/img | n img | prec | bs | oom |
-|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
+| run | mode | decode | axis labels | extracted | generated | overall | type acc | ms/img | n img | prec | bs | oom |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
 """
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    import textwrap
+
+    return textwrap.wrap(text, width=width) or [""]
 
 
 def _fmt(value: float) -> str:
@@ -57,6 +68,7 @@ def ablation_row(result: EvaluationResult) -> str:
     by_source = scores.get("by_source", {})
     return (
         f"| `{result.run_id}` "
+        f"| {result.config.get('mode', '?')} "
         f"| {result.config.get('generation', '?')} "
         f"| {result.config.get('axis_label_source', '?')} "
         f"| {_fmt(result.headline)} "
@@ -114,8 +126,24 @@ def load_runs(results_dir: Path | str = DEFAULT_RESULTS_DIR) -> list[dict]:
 def format_report(result: EvaluationResult) -> str:
     """Console summary of one run."""
     scores = result.scores
+    mode = result.config.get("mode", "?")
     lines = [
-        f"run {result.run_id}  [{result.config.get('generation')}]",
+        f"run {result.run_id}  [mode={mode}, {result.config.get('generation')}]",
+    ]
+
+    stages = result.stages or {}
+    if stages.get("stages_skipped"):
+        lines += [
+            "",
+            f"  !! STAGES SKIPPED: {', '.join(stages['stages_skipped'])}",
+        ]
+        for stage, reason in (stages.get("reasons") or {}).items():
+            lines.append(f"       {stage}: {reason}")
+        lines.append(
+            "     This score is NOT comparable with a full-pipeline score."
+        )
+
+    lines += [
         "",
         f"  HEADLINE (extracted) : {result.headline:.4f}"
         f"   n={scores.get('by_source', {}).get('extracted', {}).get('n_instances', 0)}",
@@ -136,6 +164,12 @@ def format_report(result: EvaluationResult) -> str:
     for category, count in result.taxonomy.get("counts", {}).items():
         if count:
             lines.append(f"    {category:<24} {count:>6}  ({100.0 * count / total:.1f}%)")
+    not_applicable = result.taxonomy.get("not_applicable") or []
+    if not_applicable:
+        lines.append(
+            f"    (not applicable in {result.taxonomy.get('mode', '?')} mode: "
+            f"{', '.join(not_applicable)})"
+        )
 
     lines += ["", "  latency (ms/image):"]
     for key, value in result.latency.items():
@@ -148,11 +182,15 @@ def format_report(result: EvaluationResult) -> str:
         f"    device           {runtime.get('gpu_name', runtime.get('requested_device', '?'))}"
     )
     lines.append(f"    precision        {runtime.get('precision', '?')}")
-    lines.append(
-        f"    batch sizes      donut={result.config.get('donut_batch_size', '?')}"
-        f" axis={result.config.get('axis_batch_size', '?')}"
-        f" markers={result.config.get('marker_batch_size', '?')}"
-    )
+    # Only stages that ran; a batch size for a skipped stage is noise.
+    stages_run = set((result.stages or {}).get("stages_run") or
+                     ["donut", "axis", "markers"])
+    batch_parts = [f"donut={result.config.get('donut_batch_size', '?')}"]
+    if "axis" in stages_run:
+        batch_parts.append(f"axis={result.config.get('axis_batch_size', '?')}")
+    if "markers" in stages_run:
+        batch_parts.append(f"markers={result.config.get('marker_batch_size', '?')}")
+    lines.append("    batch sizes      " + " ".join(batch_parts))
     if runtime.get("peak_memory_mb") is not None:
         lines.append(f"    peak GPU memory  {runtime['peak_memory_mb']:.1f} MB")
     if runtime.get("gpu_total_mb") is not None:
@@ -185,6 +223,16 @@ def format_report(result: EvaluationResult) -> str:
         )
 
     populations = result.populations
+    if result.warnings:
+        lines += ["", "  sanity checks:"]
+        for warning in result.warnings:
+            marker = {"error": "!!", "warning": " !", "info": "  "}.get(
+                warning.get("level"), "  "
+            )
+            lines.append(f"    {marker} [{warning.get('code')}]")
+            for chunk in _wrap(warning.get("message", ""), 68):
+                lines.append(f"         {chunk}")
+
     lines += [
         "",
         "  finding F population:",

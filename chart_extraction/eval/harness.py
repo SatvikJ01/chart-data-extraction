@@ -24,7 +24,9 @@ from chart_extraction.data.images import ImageRef
 from chart_extraction.eval.ground_truth import Annotation, annotations_to_frame
 from chart_extraction.eval.metric import score_instance
 from chart_extraction.eval.splits import Split
-from chart_extraction.eval.taxonomy import taxonomy_by_chart_type, taxonomy_counts
+from chart_extraction.eval.sanity import check_against_reference
+from chart_extraction.eval.taxonomy import taxonomy_report
+from chart_extraction.stages import MODE_DONUT_ONLY, MODE_FULL
 from chart_extraction.pipeline import ImageOutcome, decode_all
 
 logger = logging.getLogger(__name__)
@@ -201,6 +203,8 @@ class EvaluationResult:
     populations: dict
     runtime: dict = field(default_factory=dict)
     oom: dict = field(default_factory=dict)
+    stages: dict = field(default_factory=dict)
+    warnings: list = field(default_factory=list)
     caveats: list = field(default_factory=lambda: [LEAKAGE_CAVEAT])
     per_instance: pd.DataFrame | None = None
 
@@ -225,6 +229,8 @@ class EvaluationResult:
             "populations": self.populations,
             "runtime": self.runtime,
             "oom": self.oom,
+            "stages": self.stages,
+            "warnings": self.warnings,
             "caveats": self.caveats,
         }
 
@@ -242,6 +248,7 @@ def evaluate(
     run_id: str | None = None,
     runtime: dict | None = None,
     oom_policy=None,
+    stages: dict | None = None,
 ) -> EvaluationResult:
     """Aggregate one pass. Pure -- no models are run here."""
     image_ids = [r.image_id for r in refs]
@@ -254,6 +261,14 @@ def evaluate(
 
     oom_summary = oom_policy.summary() if oom_policy is not None else {}
     caveats = [LEAKAGE_CAVEAT]
+
+    if config.mode == MODE_DONUT_ONLY:
+        caveats.append(
+            "DONUT-ONLY RUN. The axis CNN and marker detector did not run; "
+            "Donut's generated series was used directly. This is a different "
+            "system from the full pipeline and its score must never be "
+            "compared with, or reported as, a full-pipeline score."
+        )
     if oom_summary.get("n_recovered"):
         # An OOM retry lowers that image's Donut input resolution, which changes
         # its prediction. A run containing degraded images is not directly
@@ -292,6 +307,7 @@ def evaluate(
             "generation": _generation_label(config),
             "num_beams": config.generation.num_beams,
             "do_sample": config.generation.do_sample,
+            "mode": config.mode,
             "axis_label_source": config.axis_label_source,
             "marker_score_threshold": config.marker_score_threshold,
             "donut_random_padding": config.donut_random_padding,
@@ -310,15 +326,19 @@ def evaluate(
             "composition": split.composition,
         },
         scores=scores,
-        taxonomy={
-            "counts": taxonomy_counts(outcomes, annotations),
-            "by_ground_truth_chart_type": taxonomy_by_chart_type(outcomes, annotations),
-        },
+        taxonomy=taxonomy_report(outcomes, annotations, config.mode),
         latency=timings.per_image_ms() | {"total_wall_s": round(timings.total_s, 3)},
         models=models,
         populations=populations,
         runtime=runtime or {},
         oom=oom_summary,
+        stages=stages or {"mode": config.mode},
+        warnings=[
+            w.as_dict()
+            for w in check_against_reference(
+                scores.get("overall", 0.0), config.mode, scores.get("n_instances", 0)
+            )
+        ],
         caveats=caveats,
         per_instance=per_instance,
     )
