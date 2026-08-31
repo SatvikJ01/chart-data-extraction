@@ -142,6 +142,13 @@ class PipelineConfig:
     marker_label_id: int = 3
     marker_score_threshold: float = 0.5
 
+    #: "full" (Donut + axis CNN + marker detector) or "donut_only" (Donut's
+    #: generated series used directly, no detection stages). See
+    #: chart_extraction.stages. A donut_only run is a different system
+    #: producing a different number, not a degraded full run, so the mode is
+    #: recorded alongside every score.
+    mode: str = "full"
+
     # --- The AxisLabelSource seam (Phase 0 finding B) -----------------------
     # Selects which implementation supplies y-axis tick *labels* to the
     # calibration stage. See chart_extraction.axis.labels for the registry and

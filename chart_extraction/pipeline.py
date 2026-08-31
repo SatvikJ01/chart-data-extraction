@@ -22,6 +22,7 @@ from chart_extraction.data.submission import build_submission
 from chart_extraction.decoding import DecodeContext, build_decoder
 from chart_extraction.donut.parsing import DonutPrediction
 from chart_extraction.markers.inference import MarkerDetections
+from chart_extraction.stages import MODE_DONUT_ONLY, MODE_FULL
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,10 @@ class ImageOutcome:
     x_series: list = field(default_factory=list)
     y_series: list = field(default_factory=list)
     failure_mode: str | None = None
+    #: Which pipeline mode produced this outcome. A donut_only outcome took its
+    #: y series straight from Donut; a full outcome re-derived it from the
+    #: detection stages. The two are not comparable.
+    mode: str = MODE_FULL
 
 
 def build_calibration(
@@ -66,16 +71,24 @@ def build_calibration(
 def decode_all(
     refs: Sequence[ImageRef],
     donut_predictions: Mapping[str, DonutPrediction],
-    axis_ticks: Mapping[str, AxisTicks],
-    marker_detections: Mapping[str, MarkerDetections],
+    axis_ticks: Mapping[str, AxisTicks] | None = None,
+    marker_detections: Mapping[str, MarkerDetections] | None = None,
     config: PipelineConfig | None = None,
 ) -> dict[str, ImageOutcome]:
-    """Join the three stages by image id and decode each image."""
+    """Join the available stages by image id and decode each image.
+
+    In donut_only mode the detection mappings are unused and may be None.
+    """
     config = config or PipelineConfig()
+    axis_ticks = axis_ticks or {}
+    marker_detections = marker_detections or {}
     label_source = build_axis_label_source(config.axis_label_source)
 
     image_ids = [r.image_id for r in refs]
     require_all_ids("donut", donut_predictions, image_ids)
+
+    if config.mode not in (MODE_FULL, MODE_DONUT_ONLY):
+        raise ValueError(f"unknown pipeline mode {config.mode!r}")
 
     outcomes: dict[str, ImageOutcome] = {}
 
@@ -94,8 +107,22 @@ def decode_all(
         # x series comes straight from Donut for every chart type, exactly as in
         # the notebook. Only the y series is re-derived from the CV stages.
         outcome = ImageOutcome(
-            image_id=image_id, chart_type=chart_type, x_series=list(prediction.x)
+            image_id=image_id,
+            chart_type=chart_type,
+            x_series=list(prediction.x),
+            mode=config.mode,
         )
+
+        if config.mode == MODE_DONUT_ONLY:
+            # Donut's generated y series is used as-is -- this is exactly what
+            # tuned-donut.ipynb did, and it is the configuration the published
+            # leaderboard score for this checkpoint refers to. No axis
+            # calibration, no marker detection, no per-chart-type decoder.
+            outcome.y_series = list(prediction.y)
+            if not outcome.y_series:
+                outcome.failure_mode = "empty_series"
+            outcomes[image_id] = outcome
+            continue
 
         decoder = build_decoder(chart_type)
         if decoder is None:
