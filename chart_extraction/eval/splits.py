@@ -138,3 +138,93 @@ def holdout_complement(
     """
     held = set(split.image_ids)
     return tuple(image_id for image_id in sorted(annotations) if image_id not in held)
+
+
+# --- Reportable subsampling -------------------------------------------------
+#
+# Distinct from ``--limit``, which truncates and is deliberately NOT reportable.
+# A subsample is a legitimate measurement of a population: it is drawn at
+# random, it is reproducible from its seed, and it is recorded with its size and
+# seed so a reader can tell it apart from a full run.
+
+
+def stratified_sample(
+    image_ids: Sequence[str],
+    annotations: Mapping[str, Annotation],
+    n: int,
+    seed: int = 0,
+) -> tuple[list[str], dict]:
+    """Draw a deterministic stratified random subsample.
+
+    Stratified on ``(source, chart_type)``. Chart types score very differently
+    from one another -- measured spread on this pipeline runs from ~0.11 for
+    scatter to ~0.69 for vertical_bar -- so an unstratified draw would shift the
+    aggregate simply by varying the type mix, and two samples of the same size
+    would not be comparable.
+
+    Each stratum contributes a share proportional to its size, with the largest
+    remainders taking any leftover slots. Determinism comes from sorting ids
+    inside each stratum before shuffling with a seeded RNG, so the result does
+    not depend on dict or filesystem ordering.
+
+    Returns the selected ids and a record describing the draw.
+    """
+    import random
+
+    if n <= 0:
+        raise ValueError(f"--sample must be positive, got {n}")
+
+    population = sorted(image_ids)
+    if n >= len(population):
+        return list(population), {
+            "sampled": False,
+            "reason": f"requested {n} >= population {len(population)}",
+            "n_population": len(population),
+            "n_selected": len(population),
+            "seed": seed,
+        }
+
+    strata: dict[tuple[str, str], list[str]] = {}
+    for image_id in population:
+        annotation = annotations[image_id]
+        strata.setdefault((annotation.source, annotation.chart_type), []).append(image_id)
+
+    total = len(population)
+    # Proportional allocation, then hand out leftovers by largest remainder so
+    # the sample size is exact and small strata are not systematically starved.
+    exact = {key: len(members) * n / total for key, members in strata.items()}
+    allocation = {key: int(value) for key, value in exact.items()}
+    remaining = n - sum(allocation.values())
+    for key, _ in sorted(
+        exact.items(), key=lambda kv: (-(kv[1] - int(kv[1])), kv[0])
+    )[:remaining]:
+        allocation[key] += 1
+
+    rng = random.Random(seed)
+    selected: list[str] = []
+    stratum_record: dict[str, dict] = {}
+
+    for key in sorted(strata):
+        members = sorted(strata[key])
+        take = min(allocation.get(key, 0), len(members))
+        # Shuffle a copy of the sorted list: order in equals order out.
+        shuffled = list(members)
+        rng.shuffle(shuffled)
+        chosen = sorted(shuffled[:take])
+        selected.extend(chosen)
+        stratum_record[f"{key[0]}/{key[1]}"] = {
+            "population": len(members),
+            "selected": len(chosen),
+        }
+
+    selected.sort()
+    return selected, {
+        "sampled": True,
+        "method": "stratified(source, chart_type)",
+        "n_requested": n,
+        "n_selected": len(selected),
+        "n_population": total,
+        "fraction": round(len(selected) / total, 6) if total else 0.0,
+        "seed": seed,
+        "strata": stratum_record,
+    }
