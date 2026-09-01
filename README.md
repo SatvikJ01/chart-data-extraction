@@ -192,9 +192,36 @@ export BENETECH_Y_AXIS=~/models/y_axis.pth
 export BENETECH_MARKER=~/models/marker.pth
 ```
 
-`--subset extracted|generated|both` picks the source stratum; `--limit N` caps
-the split for smoke runs and refuses to write to the results file, so a smoke
-number cannot be mistaken for a reportable one.
+`--subset extracted|generated|both` picks the source stratum.
+
+Two different ways to evaluate less than everything, and the distinction is
+deliberate:
+
+- **`--sample N --seed S` is reportable.** A deterministic stratified random
+  subsample of N images, stratified on `(source, chart_type)` — chart types
+  score very differently from one another, so an unstratified draw would move
+  the aggregate by mix alone. The run is written to `results/` recorded with its
+  size, seed and per-stratum counts, and appears in the ablation table as
+  `N/P s=SEED` rather than `full`. Reproduce it exactly by passing the same N
+  and seed.
+- **`--limit N` is a throwaway.** It takes the first N images and refuses to
+  write results at all. Use it to check a run starts, never for a number you
+  intend to quote.
+
+Every row carries a `+/-95%` column: the 95% confidence interval on the overall
+score, **clustered by image**. The x and y instances of one image share a chart
+type, a generation and a failure mode, so treating 2N instances as 2N
+independent draws would understate the error by up to √2. Two rows differing by
+less than their intervals are not distinguishable at their sample sizes.
+
+### Progress
+
+All three inference stages log progress on a fixed time interval —
+`donut: 320/1118 (28.6%) 2.13 img/s elapsed 2m30s eta 6m20s` — so a slow run is
+distinguishable from a hung one. It logs a complete line rather than using
+tqdm's carriage-return rendering, which turns a captured Kaggle log or redirected
+file into thousands of unreadable lines. If a pass raises, the reporter still
+logs where it got to.
 
 ### Local single-GPU path
 
