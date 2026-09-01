@@ -27,3 +27,4 @@ and is not directly comparable with a row that has none.
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
 | `20260901T003911Z` | donut_only | greedy | donut_series | 0.5455 | 0.0000 | 0.5455 | 0.9830 | 2516.5 | 4106 | fp16 | 1 | 0 |
 | `20260901T020429Z` | donut_only | greedy | donut_series | 0.5446 | 0.0000 | 0.5446 | 0.9830 | 525.7 | 1118 | fp16 | 8 | 0 |
+| `20260901T125942Z` | donut_only | beam_search(num_beams=2) | donut_series | 0.5421 | 0.0000 | 0.5421 | 0.9776 | 1462.6 | 1118 | fp16 | 4 | 0 |
