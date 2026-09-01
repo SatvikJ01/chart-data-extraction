@@ -26,3 +26,4 @@ and is not directly comparable with a row that has none.
 | run | mode | decode | axis labels | extracted | generated | overall | type acc | ms/img | n img | prec | bs | oom |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
 | `20260901T003911Z` | donut_only | greedy | donut_series | 0.5455 | 0.0000 | 0.5455 | 0.9830 | 2516.5 | 4106 | fp16 | 1 | 0 |
+| `20260901T020429Z` | donut_only | greedy | donut_series | 0.5446 | 0.0000 | 0.5446 | 0.9830 | 525.7 | 1118 | fp16 | 8 | 0 |
