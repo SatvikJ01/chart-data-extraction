@@ -349,3 +349,104 @@ def test_skipped_stages_have_no_models_or_latency(donut_only_result):
     assert names == {"donut"}
     assert donut_only_result.latency["axis_ms"] == 0.0
     assert donut_only_result.latency["markers_ms"] == 0.0
+
+
+# --- Composition-aware messaging --------------------------------------------
+
+from chart_extraction.eval.sanity import Composition, composition_from_scores  # noqa: E402
+from chart_extraction.eval.harness import distribution_caveat  # noqa: E402
+
+
+def _comp(extracted=0, generated=0):
+    counts = {}
+    if extracted:
+        counts["extracted"] = extracted
+    if generated:
+        counts["generated"] = generated
+    return Composition(counts=counts)
+
+
+def test_extracted_only_run_is_never_called_synthetic():
+    """The bug this guards: an --subset extracted run described as 'mostly
+    synthetic' when it scored zero synthetic instances."""
+    composition = _comp(extracted=2236)
+    assert composition.label == "extracted-only"
+    assert not composition.distribution_applies
+
+    warnings = check_against_reference(
+        0.5455, MODE_DONUT_ONLY, 2236, composition=composition
+    )
+    for warning in warnings:
+        assert "mostly synthetic" not in warning.message
+        assert "split is mostly synthetic" not in warning.message
+
+
+def test_extracted_only_message_names_leakage_as_the_only_pressure():
+    composition = _comp(extracted=2236)
+    warning = [
+        w for w in check_against_reference(0.5455, MODE_DONUT_ONLY, 2236,
+                                           composition=composition)
+        if w.code == "above_reference"
+    ][0]
+    assert "extracted-only" in warning.message
+    assert "leakage is the only known upward pressure" in warning.message
+    assert "Do not report this as beating the leaderboard" in warning.message
+
+
+def test_generated_heavy_message_does_cite_synthetic():
+    composition = _comp(extracted=500, generated=1500)
+    warning = [
+        w for w in check_against_reference(0.60, MODE_DONUT_ONLY, 2000,
+                                           composition=composition)
+        if w.code == "above_reference"
+    ][0]
+    assert "75%" in warning.message
+    assert "synthetic" in warning.message
+
+
+def test_composition_labels():
+    assert _comp(extracted=10).label == "extracted-only"
+    assert "fully synthetic" in _comp(generated=10).label
+    assert "50%" in _comp(extracted=5, generated=5).label
+
+
+def test_upward_pressures_count_by_composition():
+    """Extracted-only has one known upward pressure; mixed has two."""
+    assert len(_comp(extracted=10).upward_pressures()) == 1
+    assert len(_comp(extracted=5, generated=5).upward_pressures()) == 2
+
+
+def test_below_reference_reasoning_adapts():
+    extracted = check_against_reference(0.40, MODE_DONUT_ONLY, 100,
+                                        composition=_comp(extracted=100))
+    message = [w for w in extracted if w.code == "below_reference"][0].message
+    assert "easier than the test set" not in message
+    assert "extracted-only" in message
+
+
+def test_distribution_caveat_is_omitted_or_inverted_for_extracted_only():
+    caveat = distribution_caveat(_comp(extracted=100))
+    assert "does not apply to this number" in caveat
+    assert "mostly synthetic" not in caveat
+
+
+def test_distribution_caveat_warns_hard_on_generated_only():
+    caveat = distribution_caveat(_comp(generated=100))
+    assert "not indicative of real-world performance" in caveat
+
+
+def test_distribution_caveat_reports_the_real_fraction():
+    caveat = distribution_caveat(_comp(extracted=250, generated=750))
+    assert "75%" in caveat
+
+
+def test_empty_composition_produces_no_distribution_caveat():
+    assert distribution_caveat(_comp()) is None
+
+
+def test_composition_is_built_from_scored_instances_not_the_split():
+    """A --subset run evaluates a fraction of its split; describing the split
+    would misstate the run."""
+    composition = composition_from_scores({"extracted": {"n_instances": 2236}})
+    assert composition.counts == {"extracted": 2236}
+    assert composition.total == 2236

@@ -115,12 +115,32 @@ def _config(args, tmp_path):
     return build_pipeline_config(args, resolved, build_runtime(args))
 
 
-def test_local_profile_uses_batch_size_one(tmp_path):
+def test_local_profile_batch_size(tmp_path):
+    """Raised from 1 to 8 after a measured run peaked at 482MB of 3771MB --
+    batch size 1 was leaving ~87% of the card unused."""
     config = _config(_args("--profile", "local"), tmp_path)
+    assert config.donut_batch_size == 8
+    assert config.axis_batch_size == 8
+    assert config.marker_batch_size == 8
+    assert LOCAL_GPU_BATCH_SIZES["donut_batch_size"] == 8
+
+
+def test_batch_size_flag_overrides_the_local_default(tmp_path):
+    config = _config(_args("--profile", "local", "--batch-size", "16"), tmp_path)
+    assert config.donut_batch_size == 16
+
+
+def test_batch_size_one_is_still_reachable(tmp_path):
+    """The conservative setting must remain available for a smaller card."""
+    config = _config(_args("--profile", "local", "--batch-size", "1"), tmp_path)
     assert config.donut_batch_size == 1
-    assert config.axis_batch_size == 1
-    assert config.marker_batch_size == 1
-    assert LOCAL_GPU_BATCH_SIZES["donut_batch_size"] == 1
+
+
+def test_oom_fallback_stays_on_at_the_larger_batch(tmp_path):
+    """A bigger batch is only safe because the fallback still catches it."""
+    runtime = build_runtime(_args("--profile", "local", "--batch-size", "32"))
+    assert runtime.oom_retry_enabled
+    assert runtime.oom_retry_scales == (0.75, 0.5)
 
 
 def test_kaggle_profile_keeps_larger_batches(tmp_path):
