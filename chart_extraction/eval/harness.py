@@ -206,9 +206,26 @@ def score_breakdown(
         (frame["chart_type"] == frame["predicted_chart_type"]).mean()
     )
 
+    # Standard error clustered by image. The x and y instances of one image
+    # share a chart type, a generation and a failure mode, so they are strongly
+    # correlated; treating 2N instances as 2N independent draws would understate
+    # the error by up to sqrt(2). Averaging within an image first and taking the
+    # error across images avoids that.
+    per_image = frame.groupby("image_id")["score"].mean()
+    n_images = len(per_image)
+    stderr = (
+        float(per_image.std(ddof=1) / np.sqrt(n_images)) if n_images > 1 else 0.0
+    )
+
     return {
         "overall": round(float(frame["score"].mean()), 6),
         "n_instances": int(len(frame)),
+        "n_images": int(n_images),
+        "stderr": round(stderr, 6),
+        "ci95": [
+            round(float(frame["score"].mean()) - 1.96 * stderr, 6),
+            round(float(frame["score"].mean()) + 1.96 * stderr, 6),
+        ],
         "by_chart_type": _group("chart_type"),
         "by_source": _group("source"),
         "by_axis": _group("axis"),
@@ -278,6 +295,7 @@ def evaluate(
     runtime: dict | None = None,
     oom_policy=None,
     stages: dict | None = None,
+    sampling: dict | None = None,
 ) -> EvaluationResult:
     """Aggregate one pass. Pure -- no models are run here."""
     image_ids = [r.image_id for r in refs]
@@ -295,6 +313,20 @@ def evaluate(
     distribution = distribution_caveat(composition)
     if distribution:
         caveats.append(distribution)
+
+    if sampling and sampling.get("sampled"):
+        stderr = scores.get("stderr", 0.0)
+        caveats.append(
+            f"SUBSAMPLED RUN: {sampling['n_selected']} of "
+            f"{sampling['n_population']} images "
+            f"({sampling.get('fraction', 0):.1%}), stratified on "
+            f"(source, chart_type), seed {sampling['seed']}. The score carries "
+            f"sampling error of roughly +/-{1.96 * stderr:.4f} at 95% "
+            "confidence (clustered by image). Differences smaller than that "
+            "between this row and another are not measurable at this sample "
+            "size. Reproduce exactly with --sample "
+            f"{sampling['n_requested']} --seed {sampling['seed']}."
+        )
 
     if config.mode == MODE_DONUT_ONLY:
         caveats.append(
@@ -361,6 +393,9 @@ def evaluate(
             # overstate the run.
             "n_images": len(image_ids),
             "evaluated_composition": composition.as_dict(),
+            # Present and sampled=True only for a --sample run. Its absence
+            # means every image of the selected subset was evaluated.
+            "sampling": sampling or {"sampled": False},
             # The split this run was drawn from, for reproducibility.
             "source_split_n_images": len(split),
             "source_split_composition": split.composition,

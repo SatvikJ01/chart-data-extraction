@@ -28,6 +28,14 @@ _ABLATION_HEADER = f"""# Ablation table
 Appended one row per evaluation run. Never rewritten -- a superseded number
 stays in the record and is corrected by a later row.
 
+**`sample` says whether the row measures the whole subset.** `full` means every
+image of the selected subset was evaluated. `N/P s=SEED` means a deterministic
+stratified random subsample of N images from a population of P -- a legitimate
+measurement, reproducible with `--sample N --seed SEED`, but carrying the
+sampling error shown in `+/-95%`. Two rows differing by less than that interval
+are not distinguishable at their sample sizes. (A `--limit` smoke run is never
+written here at all.)
+
 **`mode` gates every comparison.** `full` is Donut + axis CNN + marker detector.
 `donut_only` is Donut alone, with its generated series used directly and no
 detection stage -- a different system, not a degraded full run. Never compare a
@@ -48,8 +56,8 @@ which counts images processed at reduced Donut input resolution after an
 out-of-memory retry. A non-zero `oom` means that row contains degraded images
 and is not directly comparable with a row that has none.
 
-| run | mode | decode | axis labels | extracted | generated | overall | type acc | ms/img | n img | prec | bs | oom |
-|---|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
+| run | mode | subset | sample | decode | axis labels | extracted | generated | overall | +/-95% | type acc | ms/img | n img | prec | bs | oom |
+|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|
 """
 
 
@@ -65,15 +73,27 @@ def _fmt(value: float) -> str:
 
 def ablation_row(result: EvaluationResult) -> str:
     scores = result.scores
-    by_source = scores.get("by_source", {})
+    sampling = (result.split or {}).get("sampling") or {}
+
+    if sampling.get("sampled"):
+        sample_cell = (
+            f"{sampling['n_selected']}/{sampling['n_population']} "
+            f"s={sampling['seed']}"
+        )
+    else:
+        sample_cell = "full"
+
     return (
         f"| `{result.run_id}` "
         f"| {result.config.get('mode', '?')} "
+        f"| {result.runtime.get('subset', '?')} "
+        f"| {sample_cell} "
         f"| {result.config.get('generation', '?')} "
         f"| {result.config.get('axis_label_source', '?')} "
         f"| {_fmt(result.headline)} "
         f"| {_fmt(result.generated_score)} "
         f"| {_fmt(scores.get('overall', 0.0))} "
+        f"| {1.96 * scores.get('stderr', 0.0):.4f} "
         f"| {_fmt(scores.get('chart_type_accuracy', 0.0))} "
         f"| {result.latency.get('total_ms', 0.0):.1f} "
         f"| {result.split.get('n_images', 0)} "
@@ -131,6 +151,17 @@ def format_report(result: EvaluationResult) -> str:
         f"run {result.run_id}  [mode={mode}, {result.config.get('generation')}]",
     ]
 
+    sampling = (result.split or {}).get("sampling") or {}
+    if sampling.get("sampled"):
+        lines += [
+            "",
+            f"  ** SUBSAMPLE: {sampling['n_selected']} of "
+            f"{sampling['n_population']} images "
+            f"({sampling.get('fraction', 0):.1%}), seed {sampling['seed']}",
+            f"     stratified on (source, chart_type); reproduce with "
+            f"--sample {sampling['n_requested']} --seed {sampling['seed']}",
+        ]
+
     stages = result.stages or {}
     if stages.get("stages_skipped"):
         lines += [
@@ -149,7 +180,8 @@ def format_report(result: EvaluationResult) -> str:
         f"   n={scores.get('by_source', {}).get('extracted', {}).get('n_instances', 0)}",
         f"  generated            : {result.generated_score:.4f}"
         f"   n={scores.get('by_source', {}).get('generated', {}).get('n_instances', 0)}",
-        f"  overall              : {scores.get('overall', 0.0):.4f}",
+        f"  overall              : {scores.get('overall', 0.0):.4f}"
+        f"  +/-{1.96 * scores.get('stderr', 0.0):.4f} (95% CI, clustered by image)",
         f"  chart-type accuracy  : {scores.get('chart_type_accuracy', 0.0):.4f}",
         "",
         "  per chart type:",
