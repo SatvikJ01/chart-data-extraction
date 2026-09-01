@@ -100,14 +100,23 @@ class RuntimeConfig:
         return cls(device="cpu", precision="fp32", expandable_segments=False)
 
 
-#: Batch sizes for a single local GPU. Batch size 1 everywhere: peak memory on
-#: this pipeline is dominated by Donut's encoder activations, and a batch of one
-#: is what lets a small card finish a run at all. It is slower per image, which
-#: is why the latency figures record the batch size they were measured at.
+#: Batch sizes for a single local GPU.
+#:
+#: Originally 1 everywhere, on the assumption that Donut's encoder activations
+#: would dominate memory. A measured donut_only run at batch size 1 peaked at
+#: 482MB of 3771MB on an RTX 2050 -- roughly 13% utilisation -- so that
+#: assumption was far too conservative and cost throughput for nothing.
+#:
+#: 8 is chosen to stay well inside the headroom that measurement revealed
+#: rather than to saturate it: activation memory scales roughly linearly with
+#: batch size, and the encoder is only part of the footprint, so the true
+#: ceiling is higher. Raise it with --batch-size if a run has headroom to
+#: spare; the OOM fallback (batch split, then resolution ladder) remains the
+#: safety net either way, so an over-large setting degrades rather than fails.
 LOCAL_GPU_BATCH_SIZES = {
-    "donut_batch_size": 1,
-    "axis_batch_size": 1,
-    "marker_batch_size": 1,
+    "donut_batch_size": 8,
+    "axis_batch_size": 8,
+    "marker_batch_size": 8,
 }
 
 

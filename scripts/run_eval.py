@@ -101,7 +101,10 @@ def parse_args(argv=None):
     runtime.add_argument("--precision", choices=["fp32", "fp16"], default=None,
                          help="overrides the profile's precision")
     runtime.add_argument("--batch-size", type=int, default=None,
-                         help="apply one batch size to every stage")
+                         help="apply one batch size to every stage, overriding the "
+                              "profile default (local=8, kaggle=4/32/4). The OOM "
+                              "fallback still applies, so an over-large value "
+                              "degrades to smaller batches rather than failing")
     runtime.add_argument("--num-workers", type=int, default=None)
     runtime.add_argument("--oom-retry-scales", default=None,
                          help="comma-separated Donut resolution scales to retry after an "
