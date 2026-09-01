@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 from chart_extraction.data.images import ImageRef
+from chart_extraction.progress import ProgressReporter
 
 AXIS_TRANSFORM = transforms.Compose(
     [
@@ -79,6 +80,7 @@ def detect_axis_ticks(
     device: str | torch.device = "cpu",
     batch_size: int = 32,
     num_workers: int = 2,
+    progress_interval_s: float = 15.0,
 ) -> dict[str, AxisTicks]:
     """Run both axis models over every image.
 
@@ -96,6 +98,9 @@ def detect_axis_ticks(
     results: dict[str, AxisTicks] = {}
     model_x.eval()
     model_y.eval()
+    progress = ProgressReporter(
+        len(refs), "axis", interval_s=progress_interval_s
+    ).start()
 
     for images, image_ids in loader:
         images = images.to(device)
@@ -113,5 +118,7 @@ def detect_axis_ticks(
                 x_points=px[lx == VALID_TICK_CLASS],
                 y_points=py[ly == VALID_TICK_CLASS],
             )
+        progress.update(len(image_ids))
 
+    progress.finish()
     return results

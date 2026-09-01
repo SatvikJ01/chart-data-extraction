@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader, Dataset
 from chart_extraction.config import GenerationConfig
 from chart_extraction.data.images import ImageRef
 from chart_extraction.donut.parsing import DonutPrediction, string2preds
+from chart_extraction.progress import ProgressReporter
 from chart_extraction.runtime import (
     OomEvent, OomPolicy, empty_cache, is_out_of_memory, scaled_size,
 )
@@ -199,6 +200,7 @@ def run_donut(
     random_padding: bool = False,
     apply_cleaning: bool = True,
     oom_policy: OomPolicy | None = None,
+    progress_interval_s: float = 15.0,
 ) -> dict[str, DonutPrediction]:
     """Generate and parse for every image, keyed on image id.
 
@@ -227,6 +229,9 @@ def run_donut(
     refs_by_id = {ref.image_id: ref for ref in refs}
     predictions: dict[str, DonutPrediction] = {}
     model.eval()
+    progress = ProgressReporter(
+        len(refs), "donut", interval_s=progress_interval_s, log=logger
+    ).start()
 
     def _record(image_id: str, generated: str) -> None:
         predictions[image_id] = string2preds(
@@ -244,12 +249,14 @@ def run_donut(
                 image_ids, _generate(model, processor, pixel_values, generation, device)
             ):
                 _record(image_id, generated)
+            progress.update(len(image_ids))
             continue
         except Exception as exc:
             if not is_out_of_memory(exc):
                 logger.exception("Donut generation failed for batch %s", image_ids)
                 for image_id in image_ids:
                     _fail(image_id, "generation_error")
+                progress.update(len(image_ids))
                 continue
 
             logger.warning(
@@ -261,6 +268,7 @@ def run_donut(
         # Batch-level OOM: fall back to one image at a time, then to lower
         # resolution for whichever images still will not fit.
         for image_id in image_ids:
+            progress.update(1)
             ref = refs_by_id[image_id]
             try:
                 single = _prepare_pixel_values(ref.path, processor, random_padding)
@@ -288,6 +296,8 @@ def run_donut(
                 _fail(image_id, "oom")
             else:
                 _record(image_id, generated)
+
+    progress.finish()
 
     missing = set(refs_by_id) - set(predictions)
     for image_id in missing:  # pragma: no cover - defensive

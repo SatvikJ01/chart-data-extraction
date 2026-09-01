@@ -16,6 +16,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from chart_extraction.data.images import ImageRef
+from chart_extraction.progress import ProgressReporter
 
 
 @dataclass
@@ -81,6 +82,7 @@ def detect_markers(
     device: str | torch.device = "cpu",
     batch_size: int = 4,
     num_workers: int = 2,
+    progress_interval_s: float = 15.0,
 ) -> dict[str, MarkerDetections]:
     """Run the marker detector, returning results keyed on image id."""
     loader = DataLoader(
@@ -93,6 +95,9 @@ def detect_markers(
 
     results: dict[str, MarkerDetections] = {}
     model.eval()
+    progress = ProgressReporter(
+        len(refs), "markers", interval_s=progress_interval_s
+    ).start()
 
     for images, image_ids in loader:
         images = [image.to(device) for image in images]
@@ -104,5 +109,7 @@ def detect_markers(
                 labels=outputs[i]["labels"].detach().cpu().numpy(),
                 scores=outputs[i]["scores"].detach().cpu().numpy(),
             )
+        progress.update(len(image_ids))
 
+    progress.finish()
     return results
