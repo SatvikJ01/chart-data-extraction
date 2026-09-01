@@ -24,22 +24,51 @@ from chart_extraction.data.images import ImageRef
 from chart_extraction.eval.ground_truth import Annotation, annotations_to_frame
 from chart_extraction.eval.metric import score_instance
 from chart_extraction.eval.splits import Split
-from chart_extraction.eval.sanity import check_against_reference
+from chart_extraction.eval.sanity import check_against_reference, composition_from_scores
 from chart_extraction.eval.taxonomy import taxonomy_report
 from chart_extraction.stages import MODE_DONUT_ONLY, MODE_FULL
 from chart_extraction.pipeline import ImageOutcome, decode_all
 
 logger = logging.getLogger(__name__)
 
-#: Carried into every result file. See splits.py for the full statement.
+#: Carried into every result file. See splits.py for the full statement. This
+#: half is true of every run regardless of what it scored.
 LEAKAGE_CAVEAT = (
     "Validation ids are held out with respect to future training in this repo "
     "only. The checkpoints under evaluation were fine-tuned elsewhere on "
     "train/ with no recorded partition, so these images may have been in their "
-    "training data. Scores are optimistic for these checkpoints. Separately, "
-    "the generated slice is a far easier distribution than the competition's "
-    "test set; the extracted slice is the headline number."
+    "training data. Scores are optimistic for these checkpoints."
 )
+
+
+def distribution_caveat(composition) -> str | None:
+    """The distribution half of the caveat, or None when it does not apply.
+
+    Built from what the run actually scored. An extracted-only run contains no
+    synthetic data, so asserting "the generated slice is easier" there would be
+    describing data the run never touched.
+    """
+    if not composition.total:
+        return None
+    if not composition.distribution_applies:
+        return (
+            "This run scored extracted (real textbook) charts only -- the same "
+            "kind the competition test set was weighted toward -- so the "
+            "synthetic-is-easier caveat does not apply to this number. Leakage "
+            "above is the only known upward pressure."
+        )
+    if composition.extracted_fraction == 0:
+        return (
+            "This run scored generated (synthetic) charts only. That is a far "
+            "easier distribution than the competition test set, so this number "
+            "is not indicative of real-world performance. Score the extracted "
+            "slice for the headline number."
+        )
+    return (
+        f"{composition.generated_fraction:.0%} of the instances scored were "
+        "generated (synthetic), a far easier distribution than the competition "
+        "test set. The extracted slice is the headline number."
+    )
 
 
 @dataclass
@@ -260,7 +289,12 @@ def evaluate(
     per_instance = scores.pop("per_instance", None)
 
     oom_summary = oom_policy.summary() if oom_policy is not None else {}
+    composition = composition_from_scores(scores.get("by_source"))
     caveats = [LEAKAGE_CAVEAT]
+
+    distribution = distribution_caveat(composition)
+    if distribution:
+        caveats.append(distribution)
 
     if config.mode == MODE_DONUT_ONLY:
         caveats.append(
@@ -322,8 +356,14 @@ def evaluate(
             "name": split.name,
             "salt": split.salt,
             "fraction": split.fraction,
-            "n_images": len(split),
-            "composition": split.composition,
+            # What was actually scored. A --subset run evaluates a fraction of
+            # its split, so reporting the split's own totals here would
+            # overstate the run.
+            "n_images": len(image_ids),
+            "evaluated_composition": composition.as_dict(),
+            # The split this run was drawn from, for reproducibility.
+            "source_split_n_images": len(split),
+            "source_split_composition": split.composition,
         },
         scores=scores,
         taxonomy=taxonomy_report(outcomes, annotations, config.mode),
@@ -336,7 +376,10 @@ def evaluate(
         warnings=[
             w.as_dict()
             for w in check_against_reference(
-                scores.get("overall", 0.0), config.mode, scores.get("n_instances", 0)
+                scores.get("overall", 0.0),
+                config.mode,
+                scores.get("n_instances", 0),
+                composition=composition,
             )
         ],
         caveats=caveats,
