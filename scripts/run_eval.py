@@ -91,12 +91,22 @@ def parse_args(argv=None):
                             "extracted is the headline slice")
     split.add_argument("--fraction", type=float, default=0.05,
                        help="fraction of the generated stratum to hold out")
+    split.add_argument("--sample", type=int, default=None,
+                       help="evaluate a deterministic stratified random subsample of N "
+                            "images. Unlike --limit this IS reportable: it is recorded "
+                            "with its size and seed and marked as a sample in the "
+                            "ablation table")
+    split.add_argument("--seed", type=int, default=0,
+                       help="seed for --sample (default 0). Same N and seed give the "
+                            "same images")
     split.add_argument("--limit", type=int, default=None,
-                       help="cap the split size for smoke runs; refuses to write results")
+                       help="THROWAWAY smoke option: take the first N images and refuse "
+                            "to write results. Use --sample for a number you intend to "
+                            "report")
 
     runtime = parser.add_argument_group("runtime")
     runtime.add_argument("--profile", choices=["local", "kaggle", "cpu"], default="kaggle",
-                         help="local: fp16 + batch size 1. kaggle: fp32 + larger batches")
+                         help="local: fp16 + batch size 8. kaggle: fp32 + larger batches")
     runtime.add_argument("--device", default=None, help="overrides the profile's device")
     runtime.add_argument("--precision", choices=["fp32", "fp16"], default=None,
                          help="overrides the profile's precision")
@@ -257,11 +267,30 @@ def main(argv=None) -> int:
         return 2
     log.info("subset=%s -> %d images", args.subset, len(image_ids))
 
+    sampling = {"sampled": False}
+    if args.sample:
+        from chart_extraction.eval.splits import stratified_sample
+
+        image_ids, sampling = stratified_sample(
+            image_ids, annotations, args.sample, seed=args.seed
+        )
+        if sampling["sampled"]:
+            log.info(
+                "SUBSAMPLE: %d of %d images (%.1f%%), stratified on "
+                "(source, chart_type), seed %d. This IS reportable.",
+                sampling["n_selected"], sampling["n_population"],
+                100 * sampling["fraction"], args.seed,
+            )
+        else:
+            log.info("--sample %d >= population; evaluating all %d images",
+                     args.sample, len(image_ids))
+
     if args.limit:
         image_ids = image_ids[: args.limit]
         log.warning(
             "SMOKE RUN: capped at %d images -- not a reportable number, and not "
-            "written to the results file", len(image_ids),
+            "written to the results file. Use --sample for a reportable subset.",
+            len(image_ids),
         )
 
     refs = [ImageRef(image_id=i, path=image_dir / f"{i}.jpg") for i in image_ids]
@@ -306,6 +335,7 @@ def main(argv=None) -> int:
         runtime=runtime_info,
         oom_policy=policy,
         stages=availability.as_dict() | {"mode": mode},
+        sampling=sampling,
     )
 
     print()
