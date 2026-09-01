@@ -161,10 +161,19 @@ comparison is deliberately **asymmetric**:
   differences explain it. That is the signal for a loading problem — weights not
   actually loaded, processor and tokenizer from different checkpoints, or a
   special-token schema the decoder no longer matches.
-- Scoring **above** 0.44 is reported as information only, never as success. Our
-  split is mostly synthetic and therefore easier than the test set, and the
-  checkpoint may have trained on these very images. A higher number is expected
-  and must not be reported as beating the leaderboard.
+- Scoring **above** 0.44 is reported as information only, never as success. Up
+  to two known effects push our number up, and **which ones apply depends on
+  what the run actually scored**, not on what the split contained: a
+  `--subset extracted` run scores no synthetic data, so the easier-distribution
+  argument does not apply to it and only possible `train/` leakage does. Every
+  message is built from the measured per-source composition of the scored
+  instances. A higher number is expected and must not be reported as beating the
+  leaderboard.
+
+Result records report the composition **actually evaluated** under
+`split.evaluated_composition`, with the split it was drawn from retained
+separately as `split.source_split_composition` — a `--subset` run evaluates a
+fraction of its split, so reporting the split's totals would overstate it.
 
 ### Configuration and paths
 
@@ -189,7 +198,7 @@ number cannot be mistaken for a reportable one.
 
 ### Local single-GPU path
 
-`--profile local` targets one small card: fp16, batch size 1 on every stage, and
+`--profile local` targets one small card: fp16, batch size 8 on every stage, and
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` set before torch is imported
 so the allocator can grow segments in place instead of fragmenting.
 
@@ -198,6 +207,13 @@ weights resident and does nothing for the parameters that dominate its
 footprint. The axis CNN and Faster R-CNN use autocast instead — torchvision's
 detection models are fragile under hard fp16, and halving weights buys little
 for models that small.
+
+Batch size was originally 1 on the assumption that Donut's encoder activations
+would dominate. A measured `donut_only` run peaked at **482 MB of 3771 MB** on an
+RTX 2050 — about 13% utilisation — so that was far too conservative and cost
+throughput for nothing. The default is now 8, chosen to sit well inside the
+measured headroom rather than to saturate it; `--batch-size N` overrides it, and
+the OOM fallback below means an over-large value degrades rather than fails.
 
 **OOM recovery.** A batch that will not fit is retried image-by-image; an image
 that still will not fit is retried at progressively lower Donut input resolution
