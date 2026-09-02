@@ -28,6 +28,11 @@ _ABLATION_HEADER = f"""# Ablation table
 Appended one row per evaluation run. Never rewritten -- a superseded number
 stays in the record and is corrected by a later row.
 
+**`model` says which checkpoint produced the row.** `base` is the original
+fine-tuned Donut checkpoint; anything else is a checkpoint this repo trained.
+Rows from different models are only comparable when they scored the same images
+— check `subset` and `sample` agree before reading a difference.
+
 **`sample` says whether the row measures the whole subset.** `full` means every
 image of the selected subset was evaluated. `N/P s=SEED` means a deterministic
 stratified random subsample of N images from a population of P -- a legitimate
@@ -56,7 +61,7 @@ which counts images processed at reduced Donut input resolution after an
 out-of-memory retry. A non-zero `oom` means that row contains degraded images
 and is not directly comparable with a row that has none.
 
-| run | mode | subset | sample | decode | axis labels | extracted | generated | overall | +/-95% | type acc | ms/img | n img | prec | bs | oom |
+| run | model | mode | subset | sample | decode | extracted | generated | overall | +/-95% | type acc | ms/img | n img | prec | bs | oom |
 |---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|
 """
 
@@ -85,11 +90,11 @@ def ablation_row(result: EvaluationResult) -> str:
 
     return (
         f"| `{result.run_id}` "
+        f"| {result.config.get('model_tag', 'base')} "
         f"| {result.config.get('mode', '?')} "
         f"| {result.runtime.get('subset', '?')} "
         f"| {sample_cell} "
         f"| {result.config.get('generation', '?')} "
-        f"| {result.config.get('axis_label_source', '?')} "
         f"| {_fmt(result.headline)} "
         f"| {_fmt(result.generated_score)} "
         f"| {_fmt(scores.get('overall', 0.0))} "
@@ -148,7 +153,8 @@ def format_report(result: EvaluationResult) -> str:
     scores = result.scores
     mode = result.config.get("mode", "?")
     lines = [
-        f"run {result.run_id}  [mode={mode}, {result.config.get('generation')}]",
+        f"run {result.run_id}  [model={result.config.get('model_tag', 'base')}, "
+        f"mode={mode}, {result.config.get('generation')}]",
     ]
 
     sampling = (result.split or {}).get("sampling") or {}

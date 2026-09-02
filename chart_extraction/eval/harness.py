@@ -41,6 +41,39 @@ LEAKAGE_CAVEAT = (
 )
 
 
+def holdout_caveat(provenance: dict | None) -> str | None:
+    """Replace the generic leakage caveat when a run scores a real held-out set.
+
+    A set held out from the specialization fine-tune was genuinely never
+    optimised against -- but it was not held out from the **base** checkpoint
+    that fine-tune started from, whose own partition is unrecorded. So the
+    absolute score is still optimistic; what is defensible is the difference
+    between two models scored on the same set, since both inherit the same base
+    history. Saying otherwise would overclaim exactly the thing this experiment
+    exists to establish.
+    """
+    if not provenance or not provenance.get("held_out_from_finetune"):
+        return None
+
+    seed = provenance.get("seed")
+    n_holdout = provenance.get("n_holdout")
+    if provenance.get("held_out_from_base_checkpoint"):
+        return (
+            f"Scored on {n_holdout} images held out from all training "
+            f"(seed {seed}). This number is leakage-free."
+        )
+    return (
+        f"PARTIALLY LEAKAGE-FREE. These {n_holdout} images were held out from "
+        f"the specialization fine-tune (seed {seed}) and were never optimised "
+        "against by it, nor used for checkpoint selection. They were NOT held "
+        "out from the base checkpoint the fine-tune started from, whose own "
+        "train/validation partition is unrecorded, so the absolute score is "
+        "still optimistic. The defensible quantity is the DIFFERENCE between "
+        "models scored on this same set, since both inherit the same base "
+        "checkpoint history."
+    )
+
+
 def distribution_caveat(composition) -> str | None:
     """The distribution half of the caveat, or None when it does not apply.
 
@@ -296,6 +329,8 @@ def evaluate(
     oom_policy=None,
     stages: dict | None = None,
     sampling: dict | None = None,
+    provenance: dict | None = None,
+    model_tag: str | None = None,
 ) -> EvaluationResult:
     """Aggregate one pass. Pure -- no models are run here."""
     image_ids = [r.image_id for r in refs]
@@ -308,7 +343,11 @@ def evaluate(
 
     oom_summary = oom_policy.summary() if oom_policy is not None else {}
     composition = composition_from_scores(scores.get("by_source"))
-    caveats = [LEAKAGE_CAVEAT]
+
+    # A recorded holdout replaces the generic leakage caveat with a precise
+    # statement of what was and was not held out.
+    holdout = holdout_caveat(provenance)
+    caveats = [holdout] if holdout else [LEAKAGE_CAVEAT]
 
     distribution = distribution_caveat(composition)
     if distribution:
@@ -374,6 +413,7 @@ def evaluate(
             "num_beams": config.generation.num_beams,
             "do_sample": config.generation.do_sample,
             "mode": config.mode,
+            "model_tag": model_tag or "base",
             "axis_label_source": config.axis_label_source,
             "marker_score_threshold": config.marker_score_threshold,
             "donut_random_padding": config.donut_random_padding,
@@ -396,6 +436,7 @@ def evaluate(
             # Present and sampled=True only for a --sample run. Its absence
             # means every image of the selected subset was evaluated.
             "sampling": sampling or {"sampled": False},
+            "provenance": provenance or {},
             # The split this run was drawn from, for reproducibility.
             "source_split_n_images": len(split),
             "source_split_composition": split.composition,

@@ -28,6 +28,7 @@ import argparse
 import logging
 import os
 import sys
+import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -91,6 +92,13 @@ def parse_args(argv=None):
                             "extracted is the headline slice")
     split.add_argument("--fraction", type=float, default=0.05,
                        help="fraction of the generated stratum to hold out")
+    split.add_argument("--image-ids-file", type=Path, default=None,
+                       help="evaluate exactly these image ids (JSON list, or a JSON "
+                            "split file with a holdout_ids key, or newline-delimited). "
+                            "Bypasses --subset/--fraction entirely")
+    split.add_argument("--eval-provenance", type=Path, default=None,
+                       help="split JSON describing how --image-ids-file was held out; "
+                            "replaces the generic leakage caveat with a precise one")
     split.add_argument("--sample", type=int, default=None,
                        help="evaluate a deterministic stratified random subsample of N "
                             "images. Unlike --limit this IS reportable: it is recorded "
@@ -132,7 +140,30 @@ def parse_args(argv=None):
     parser.add_argument("--axis-label-source", default="donut_series",
                         help="AxisLabelSource implementation (Phase 3 registers more)")
     parser.add_argument("--run-id", default=None)
+    parser.add_argument("--model-tag", default="base",
+                        help="label for the checkpoint in the ablation table, e.g. "
+                             "'ft-extracted-s1234'")
     return parser.parse_args(argv)
+
+
+def load_image_ids(path: Path) -> list[str]:
+    """Read an explicit id list from JSON list, split file, or plain lines."""
+    text = Path(path).read_text()
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return [line.strip() for line in text.splitlines() if line.strip()]
+
+    if isinstance(payload, list):
+        return [str(v) for v in payload]
+    if isinstance(payload, dict):
+        for key in ("holdout_ids", "image_ids", "ids"):
+            if key in payload:
+                return [str(v) for v in payload[key]]
+    raise ValueError(
+        f"{path}: cannot find an id list (expected a JSON list, or a dict with "
+        "holdout_ids/image_ids/ids)"
+    )
 
 
 def build_runtime(args) -> RuntimeConfig:
@@ -260,12 +291,28 @@ def main(argv=None) -> int:
 
     from chart_extraction.eval.splits import build_validation_split
 
-    split = build_validation_split(annotations, fraction=args.fraction)
-    image_ids = select_subset(split.image_ids, annotations, args.subset)
-    if not image_ids:
-        log.error("subset %r selected 0 images from the split", args.subset)
-        return 2
-    log.info("subset=%s -> %d images", args.subset, len(image_ids))
+    provenance = {}
+    if args.image_ids_file:
+        image_ids = load_image_ids(args.image_ids_file)
+        missing_ids = [i for i in image_ids if i not in annotations]
+        if missing_ids:
+            log.error("%d ids have no annotation, e.g. %s",
+                      len(missing_ids), missing_ids[:3])
+            return 2
+        split = build_validation_split(annotations, fraction=args.fraction)
+        log.info("explicit id list: %d images from %s",
+                 len(image_ids), args.image_ids_file)
+        if args.eval_provenance:
+            provenance = json.loads(Path(args.eval_provenance).read_text())
+            provenance = provenance.get("provenance", provenance)
+            log.info("provenance: %s", provenance)
+    else:
+        split = build_validation_split(annotations, fraction=args.fraction)
+        image_ids = select_subset(split.image_ids, annotations, args.subset)
+        if not image_ids:
+            log.error("subset %r selected 0 images from the split", args.subset)
+            return 2
+        log.info("subset=%s -> %d images", args.subset, len(image_ids))
 
     sampling = {"sampled": False}
     if args.sample:
@@ -336,6 +383,8 @@ def main(argv=None) -> int:
         oom_policy=policy,
         stages=availability.as_dict() | {"mode": mode},
         sampling=sampling,
+        provenance=provenance,
+        model_tag=args.model_tag,
     )
 
     print()
