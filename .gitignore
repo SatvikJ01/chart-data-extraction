@@ -27,3 +27,12 @@ chart_extraction.paths.json
 .venv/
 .kaggle/
 kaggle.json
+
+# --- Not redistributable / not public ------------------------------------
+# Third-party Kaggle notebooks are cited by name and URL in docs/PHASE0_AUDIT.md
+# rather than vendored here; they are other authors' work. CLAUDE.md and the CV
+# image are private working material. Listed so none of them return by accident.
+CLAUDE.md
+Old_cv_pointers.png
+reference/
+notebooks/
