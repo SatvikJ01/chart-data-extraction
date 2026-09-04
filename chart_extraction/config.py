@@ -1,7 +1,7 @@
 """Central configuration.
 
 Replaces the two divergent ``CFG`` classes in the original notebooks
-(``tuned-donut.ipynb`` and ``inference-3.ipynb``), which disagreed on model
+(``tuned-donut`` and ``inference-3``), which disagreed on model
 directory and generation settings while sharing a class name.
 """
 

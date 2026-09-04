@@ -1,6 +1,6 @@
 """Axis tick detection stage.
 
-Preprocessing is preserved exactly from ``inference-3.ipynb``: PIL open ->
+Preprocessing is preserved exactly from ``inference-3``: PIL open ->
 RGB -> Resize(256, 256) -> ToTensor -> Normalize(mean=.5, std=.5). This differs
 from the marker stage's preprocessing (grayscale, unnormalised); both are kept
 as-is because the two checkpoints were trained under different pipelines.

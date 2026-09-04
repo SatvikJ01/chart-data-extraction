@@ -1,6 +1,6 @@
 """ResNet-18 backbone with two regression/classification heads for axis ticks.
 
-Architecture preserved from ``inference-3.ipynb`` so existing checkpoints load
+Architecture preserved from ``inference-3`` so existing checkpoints load
 without conversion: a ResNet-18 trunk (final FC stripped) feeding a shared
 128-d bottleneck, which forks into a point-regression head
 (``max_num_points x 2``) and a per-point class head (``max_num_points x 4``).

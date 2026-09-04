@@ -131,7 +131,7 @@ def _refs(*ids):
 
 
 def test_donut_only_uses_donuts_own_series_directly():
-    """This reproduces tuned-donut.ipynb, which is the configuration the
+    """This reproduces tuned-donut, which is the configuration the
     published leaderboard score refers to."""
     refs = _refs("a")
     predictions = {"a": DonutPrediction("a", "line", x=["Mon", "Tue"], y=[1.5, 2.5])}

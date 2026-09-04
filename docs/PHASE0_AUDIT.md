@@ -1,8 +1,30 @@
 # Phase 0 Audit
 
-Audit of `tuned-donut.ipynb` and `inference-3.ipynb` prior to refactoring.
-Every claim below was checked against notebook source; claims about *behaviour*
-were checked with runnable reproductions rather than by reading.
+Audit of the two public Kaggle notebooks this pipeline started from, carried out
+before refactoring. Every claim below was checked against the notebook source;
+claims about *behaviour* were checked with runnable reproductions rather than by
+reading.
+
+## Sources audited
+
+These notebooks are **other authors' work and are not redistributed in this
+repository**. They are cited by name and URL. Cell indices below refer to the
+code cells of the versions audited (retrieved August 2025).
+
+| Short name | Source | Author |
+|---|---|---|
+| `tuned-donut` | [Tuned Donut](https://www.kaggle.com/code/cody11null/tuned-donut) | Cody_Null |
+| `inference-3` | a multi-stage derivative of the above, adding an axis-regression CNN and a Faster R-CNN marker detector | unidentified; obtained as a private notebook copy |
+
+Both descend from nbroad's public Donut work for this competition —
+[donut-train [benetech]](https://www.kaggle.com/code/nbroad/donut-train-benetech)
+and [donut-infer (LB 0.44) [benetech]](https://www.kaggle.com/code/nbroad/donut-infer-lb-0-44-benetech),
+which is also the source of the 0.44 reference score used in
+`chart_extraction/eval/sanity.py`.
+
+I have not been able to identify the original author of `inference-3`, so it is
+described by what it does rather than credited to a name I cannot verify. If you
+recognise it, the attribution here should be corrected.
 
 ## Classification
 
@@ -63,7 +85,7 @@ Regression test: `tests/test_regressions.py::test_bug3_submission_joins_are_id_k
 
 ### Bug 5 — wrong as stated, and the real problem is worse
 
-The call is commented out in `tuned-donut.ipynb` only. In `inference-3.ipynb` it
+The call is commented out in `tuned-donut` only. In `inference-3` it
 is **live**. But inference-3's copy of the function has the load-bearing line
 commented out:
 

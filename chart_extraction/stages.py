@@ -15,7 +15,7 @@ from pathlib import Path
 #: Full multi-stage pipeline: Donut for chart type and x, CV stages re-derive y.
 MODE_FULL = "full"
 #: Donut alone: its generated x and y series are used directly, with no
-#: detection stages. This is what tuned-donut.ipynb did.
+#: detection stages. This is what tuned-donut did.
 MODE_DONUT_ONLY = "donut_only"
 MODES = (MODE_FULL, MODE_DONUT_ONLY)
 

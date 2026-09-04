@@ -3,10 +3,10 @@ r"""Repair of numeric strings emitted by Donut.
 AUDIT NOTE (Phase 0, bug 5)
 ---------------------------
 The brief recorded this as "clean_preds() never runs -- call is commented out in
-both notebooks". That is correct for ``tuned-donut.ipynb`` but **wrong for
-``inference-3.ipynb``**, where the call is live::
+both notebooks". That is correct for ``tuned-donut`` but **wrong for
+``inference-3``**, where the call is live::
 
-    x, y = clean_preds(x, y)          # inference-3.ipynb, uncommented
+    x, y = clean_preds(x, y)          # inference-3, uncommented
 
 inference-3 is, however, the worse of the two, because its copy of the function
 has the load-bearing line commented out::

@@ -2,7 +2,7 @@
 
 AUDIT NOTE (Phase 0, bug 3) -- LATENT, NOT ACTIVE
 --------------------------------------------------
-The original ``inference-3.ipynb`` built its image-ID list three separate times:
+The original ``inference-3`` built its image-ID list three separate times:
 once via ``Path.glob("*.jpg")`` for the Donut stage, and twice via
 ``os.listdir`` for the axis-CNN and marker stages. The three per-stage result
 frames were then joined **by positional index** (``df['x_val'][i]``,

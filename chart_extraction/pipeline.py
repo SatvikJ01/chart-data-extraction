@@ -115,7 +115,7 @@ def decode_all(
 
         if config.mode == MODE_DONUT_ONLY:
             # Donut's generated y series is used as-is -- this is exactly what
-            # tuned-donut.ipynb did, and it is the configuration the published
+            # tuned-donut did, and it is the configuration the published
             # leaderboard score for this checkpoint refers to. No axis
             # calibration, no marker detection, no per-chart-type decoder.
             outcome.y_series = list(prediction.y)

@@ -1,7 +1,7 @@
 """Faster R-CNN marker detector.
 
 Two-stage detector (RPN proposals + ROI head). Architecture and class count
-preserved from ``inference-3.ipynb`` so the existing checkpoint loads.
+preserved from ``inference-3`` so the existing checkpoint loads.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """Marker detection stage.
 
-Preprocessing preserved from ``inference-3.ipynb``: cv2 grayscale read ->
+Preprocessing preserved from ``inference-3``: cv2 grayscale read ->
 3-channel expand -> float32 /255 -> albumentations Resize(256, 256) ->
 ToTensorV2. Unlike the axis stage there is no mean/std normalisation, matching
 how the checkpoint was trained.

@@ -9,7 +9,7 @@ than a rewrite.
 
 AUDIT NOTE (Phase 0, finding B) -- DESIGN ERROR, deliberately preserved
 =======================================================================
-The original pipeline answered it incorrectly. In ``inference-3.ipynb``::
+The original pipeline answered it incorrectly. In ``inference-3``::
 
     labels = [float(label) if label.isdigit() else 0.0 for label in df['y_val'][i]]
     extended_y.append(extend_y_axis(y, labels))
